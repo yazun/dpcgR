@@ -25,5 +25,6 @@ Imports:
     astrolibR,
     ggplot2,
     scattermore,
-    ggnewscale
+    ggnewscale,
+    gridExtra
 RoxygenNote: 7.1.1

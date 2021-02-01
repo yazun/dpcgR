@@ -287,6 +287,7 @@ plotAitoffGalacticOverlayBigSingleType <-function (bkg, className, xm.skymap, al
 #' @export
 #' @importFrom dplyr mutate filter
 #' @importFrom ggplot2 guides
+#' @importFrom gridExtra grid.arrange
 #'
 #' @examples \dontrun{
 #' plotCmdAndHR(sosSet, valueName = cu7Name, catalogName = NULL)

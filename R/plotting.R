@@ -71,6 +71,7 @@ plotAitoffGalacticBackground<-function(skyMapD, valueName, titleName, legendName
 
 #' Plot overlay distribution in a skyplot
 #'
+#'Uses geom_point for plotting.
 #'
 #' @param bkg background plot we overlay on
 #' @param classGroup name of the primaryvartype to filter on (for classification.)
@@ -113,6 +114,24 @@ plotAitoffGalacticOverlay <-function (bkg, classGroup, xm.skymap )
     scale_fill_viridis_d(name = "Types", alpha= 0.6, option = "inferno", breaks = waiver(), labels = classSet, begin = beginColor, direction = -1)
 }
 
+
+#' Plot overlay distribution in a skyplot
+#'
+#' Uses geom_scattermore for plotting.
+#'
+#' @param bkg background plot we overlay on
+#' @param classGroup name of the primaryvartype to filter on (for classification.)
+#' @param xm.skymap dataframe to plot, with alpha, delta, and primaryvartype fields
+#'
+#' @return ggplot skymap plot.
+#' @export
+#' @importFrom dplyr filter
+#' @importFrom ggplot2 guides
+#'
+#' @examples \dontrun{
+#' # brew chunks on the xm.groups for a massive markdown generation
+#' brewed.chunks = brew_chunks(xm.groups_big,plotAitoffGalacticOverlay,xm.groups_small,xm.skymap)
+#' }
 plotAitoffGalacticOverlayBig <-function (bkg, classGroup, xm.skymap, hpxLevel = 8 )
 {
   classSet = unlist(classGroup)
@@ -172,3 +191,79 @@ plotAitoffGalacticOverlayBig <-function (bkg, classGroup, xm.skymap, hpxLevel = 
 }
 
 
+
+
+#' Plot overlay distribution in a skyplot with a single class attribute
+#'
+#' Uses geom_scattermore for plotting.
+#'
+#' @param bkg background plot we overlay on
+#' @param className name of the primaryvartype to filter on (for classification.)
+#' @param xm.skymap dataframe to plot, with alpha, delta fields
+#'
+#' @return ggplot skymap plot overlayd over bacground plot
+#' @export
+#' @importFrom dplyr mutate
+#' @importFrom ggplot2 guides
+#'
+#' @examples \dontrun{
+#' # brew chunks on the xm.groups for a massive markdown generation
+#' brewed.chunks = brew_chunks(xm.groups_big,plotAitoffGalacticOverlayBigSingleType,xm.groups_small,xm.skymap)
+#' }
+plotAitoffGalacticOverlayBigSingleType <-function (bkg, className, xm.skymap, hpxLevel = 8 )
+{
+
+
+  skyMapFixed.xm = xm.skymap %>%
+    # filter(primaryvartype %in% classSet) %>%
+    mutate(alpha = ifelse(alpha>= 0, alpha, 360 + alpha))
+
+  if(count(skyMapFixed.xm)==0) return(bkg + ggtitle(paste(className,collapse=" "), subtitle = "No objects."));
+
+  skyMapGalactic.xm = data.frame(skyMapFixed.xm, togalactic(skyMapFixed.xm$alpha, skyMapFixed.xm$delta)) %>%
+    mutate(aitoffGl = aitoffFn(gl,gb)$x, aitoffGb = aitoffFn(gl,gb)$y)
+
+  labelClass = paste(className,collapse=" ")
+  hpxDeg = dfHPX[dfHPX$Level==hpxLevel,"sq_deg"]
+
+  # plot all
+
+  # move to non-yellow bands immediately if non-zero, but then the legend is broken
+  beginColor = 0.0
+
+  at.x =  outer(1:9, 10^(1:6))[1,]
+  maxVal = max(xm.skymap[["cnt"]])
+  lab.x <- c(ifelse(log10(at.x) %% 1 == 0, at.x, NA), maxVal)
+  # my_breaks = ifelse(maxVal>=10^4, lab.x, waiver())
+  my_breaks = lab.x
+
+  bkg +
+    ggtitle(labelClass, subtitle = paste("[",length(skyMapGalactic.xm),"] objects."))  +
+
+    new_scale_colour()+
+    # geom_point(data = skyMapGalactic.xm, aes(x=aitoffGl,y=aitoffGb
+    #                                          ,colour = cnt
+    #                                          ,shape = factor(skyMapGalactic.xm$primaryvartype)
+    #                                          # ,fill = factor(skyMapGalactic.xm$primaryvartype)
+    #                                          )
+    #            , size = .5, name = "Types") +
+    geom_scattermore(
+      data = skyMapGalactic.xm, aes(x=aitoffGl,y=aitoffGb
+                                    ,colour = cnt
+                                    ,shape = factor(className)
+                                    # ,fill = factor(skyMapGalactic.xm$primaryvartype)
+      )
+      , size = 1.6, name = "Types", alpha = .4
+      , pixels = c(1920,1080), pointsize = 1.6, interpolate = FALSE) +
+    # scale_colour_viridis_c(name = "Types", alpha= 0.6, option = "inferno", breaks = waiver(), labels = classSet, begin = beginColor, direction = -1) +
+    scale_shape_manual(name = "Type", labels =  classSet, values = 1:length(className)) +
+    #scale_fill_viridis_c(name = "Types", alpha= 0.6, option = "inferno", breaks = waiver(), labels = classSet, begin = beginColor, direction = -1) +
+    scale_colour_viridis_c(name = "Density",  alpha = 0.4, option = "magma", trans="log10" , breaks = waiver()) +
+    guides(colour = guide_colourbar(
+      title = bquote(.("Sources") ~ " per " ~ (.(hpxDeg) ~ Deg^2)  ), barwidth = 1, barheight = 20, title.position = "bottom", order = 2, title.hjust = 0
+      ,title.theme = element_text(size = 15,angle = 0)
+      ,breaks = my_breaks, values = my_breaks
+    ),
+    shape = guide_legend(order = 1, title.hjust = .5)
+    )
+}

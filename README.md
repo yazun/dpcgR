@@ -6,6 +6,7 @@ Helps with DB related task:
 * Standardises visualization of Aitoff skymaps, including background data
 
 ```R
+require(devtools)
 install_github("yazun/dpcgR")
 ```
 

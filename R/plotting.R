@@ -64,7 +64,7 @@ plotAitoffGalacticBackground<-function(skyMapD, valueName, titleName, legendName
   ggplot(skyMapD,aes(x=aitoffGl,y=aitoffGb)  ) +
     ggtitle(titleName) +
     # geom_point(aes(colour = !!valName),alpha = .1, show.legend = FALSE) +
-    geom_scattermore(aes(colour = !!valName),alpha = .4, show.legend = FALSE, pixels = c(1920,1080), pointsize = 3.2, interpolate = FALSE) +
+    geom_scattermore(aes(colour = !!valName),alpha = .3, show.legend = FALSE, pixels = c(1920,1080), pointsize = 3.2, interpolate = FALSE) +
     scale_x_reverse() +
     theme +
     # scale_colour_viridis_c(alpha= 0.2, option = "magma", trans="log10" , breaks = waiver()) +
@@ -272,4 +272,85 @@ plotAitoffGalacticOverlayBigSingleType <-function (bkg, className, xm.skymap, al
     ),
     shape = guide_legend(order = 1, title.hjust = .5)
     )
+}
+
+
+
+#' Plots CMD and HR diafgrams in a combo
+#'
+#' @param inData dataframe with CMD/HR data
+#' @param valueName name of the plots
+#' @param catalogName unused for now. We could show literature ones here.
+#' @param pcolour points colours of the set points.
+#'
+#' @return
+#' @export
+#' @importFrom dplyr mutate filter
+#' @importFrom ggplot2 guides
+#'
+#' @examples \dontrun{
+#' plotCmdAndHR(sosSet, valueName = cu7Name, catalogName = NULL)
+#' }
+#'
+plotCmdAndHR <- function(inData, valueName, catalogName = NULL, pcolour = "red"){
+
+  # if(!is.null(catalogName)){
+  #     wantedData <- data[which(data$type %in% typeid & data$catalog==catalogName),]
+  # }else{
+  #     wantedData <- data[data$type %in% typeid,]
+  # }
+  wantedData = inData
+  title = paste(valueName)
+
+  wantedData$median_bp_minus_median_rp <- (wantedData$fmedian_bp - wantedData$fmedian_rp)
+
+  #ABSOLUTE COLOR MAGNITUDE
+  wantedData = wantedData %>%
+    mutate (median_bp_minus_median_rp = fmedian_bp - fmedian_rp) %>%
+    filter (!is.na(wantedData$median_bp_minus_median_rp) && !is.na(varpi_mas)) %>%
+    mutate(median_g_abs = fmedian_g + 5 + 5*log10(varpi_mas/1000)) %>%
+    filter(!is.na(median_g_abs))  ;
+
+  # pCM = plot(wantedData$median_bp_minus_median_rp, wantedData$g_median, main=paste("Color Magnitude for", title), pch=20, col=rgb(32,39,247,90,maxColorValue=255), xlab="median BP - median RP", ylab="Median G")
+  theme <- theme_bw() + theme(plot.title = element_text(hjust = 0.5, size=24),
+                              plot.subtitle = element_text(hjust = 0.5),
+                              plot.tag = element_text(hjust = 0.5),
+                              axis.text.x = element_text(size = 15)
+  )
+
+  pCM = ggplot() +
+    ggtitle(paste("Color Magnitude for", title), subtitle = paste(""))  +
+    # geom_tile(data = data.bkg.cmd, aes( x= median_bp_minus_median_rp, y = fmedian_g, fill = (cnt))) +
+    geom_tile(data = data.bkg.cmd, aes(median_bp_minus_median_rp, fmedian_g, fill = log(cnt)), alpha = 1
+              ,  width = .01, height = .01, show.legend = FALSE
+    ) +
+
+    # scale_fill_continuous(low="lightgrey", high="black") +
+    scale_fill_gradient(low="lightgrey", high="black") +
+    geom_point(data = wantedData, aes(x = median_bp_minus_median_rp, y =  fmedian_g), shape=16, alpha = .5, colour = pcolour) +
+    labs(x = "median BP - median RP", y = "Median G")  +
+    theme +
+    scale_y_reverse()
+
+  pAM = ggplot() +
+    ggtitle(paste("Color Absolute Magnitude for", title), subtitle = paste(""))  +
+    geom_tile(data = data.bkg.hr, aes(median_bp_minus_median_rp, median_g_abs, fill = log(cnt)), alpha = 1
+              ,  width = .01, height = .01, show.legend = FALSE
+    ) +
+    scale_fill_continuous(low="lightgrey", high="black") +
+    geom_point(data = wantedData, aes(x = median_bp_minus_median_rp, y =  median_g_abs),shape=16, alpha = .5, colour = pcolour) +
+    labs(x="median BP - median RP", y="Absolute Median G")  +
+    theme +
+    scale_y_reverse()
+
+
+  # pAM = plot(abs_mag_data$median_bp_minus_median_rp, abs_mag_data$median_g_abs, main=paste("Color Absolute Magnitude for", title), pch=20, col=rgb(32,39,247,90,maxColorValue=255), xlab="Median BP - Median RP", ylab="Absolute Median G")
+  lay <- rbind(
+    c(1,1)
+    ,c(1,2)
+  )
+  grid.arrange(pCM, pAM, nrow = 1 )
+  # pAM
+
+
 }

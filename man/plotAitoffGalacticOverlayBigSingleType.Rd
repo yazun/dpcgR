@@ -20,6 +20,10 @@ plotAitoffGalacticOverlayBigSingleType(
 
 \item{xm.skymap}{dataframe to plot, with alpha, delta fields}
 
+\item{alpha}{name of alpha in Deg in df}
+
+\item{delta}{name of delta in Deg in df}
+
 \item{hpxLevel}{expected hpxLevel of the input.}
 }
 \value{

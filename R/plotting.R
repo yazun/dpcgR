@@ -247,7 +247,7 @@ plotAitoffGalacticOverlayBigSingleType <-function (bkg, className, xm.skymap, al
   my_breaks = lab.x
 
   bkg +
-    ggtitle(labelClass, subtitle = paste("[",length(skyMapGalactic.xm),"] objects."))  +
+    ggtitle(labelClass, subtitle = paste("[",length(skyMapGalactic.xm$cnt),"] objects."))  +
 
     new_scale_colour()+
     geom_scattermore(
@@ -259,9 +259,9 @@ plotAitoffGalacticOverlayBigSingleType <-function (bkg, className, xm.skymap, al
       , size = 1.6, name = "Types", alpha = .4
       , pixels = c(1920,1080), pointsize = 1.6, interpolate = FALSE) +
     # scale_colour_viridis_c(name = "Types", alpha= 0.6, option = "inferno", breaks = waiver(), labels = classSet, begin = beginColor, direction = -1) +
-    scale_shape_manual(name = "Type", labels =  classSet, values = 1:length(className)) +
+    scale_shape_manual(name = "Type", labels =  className, values = 1:length(className)) +
     #scale_fill_viridis_c(name = "Types", alpha= 0.6, option = "inferno", breaks = waiver(), labels = classSet, begin = beginColor, direction = -1) +
-    scale_colour_viridis_c(name = "Density",  alpha = 0.4, option = "magma", trans="log10" , breaks = waiver()) +
+    scale_colour_viridis_c(name = "Density",  alpha = 0.4, option = "plasma", trans="log10" , breaks = waiver()) +
     guides(colour = guide_colourbar(
       title = bquote(.("Sources") ~ " per " ~ (.(hpxDeg) ~ Deg^2)  ), barwidth = 1, barheight = 20, title.position = "bottom", order = 2, title.hjust = 0
       ,title.theme = element_text(size = 15,angle = 0)

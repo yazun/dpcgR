@@ -122,6 +122,7 @@ plotAitoffGalacticOverlay <-function (bkg, classGroup, xm.skymap )
 #' @param bkg background plot we overlay on
 #' @param classGroup name of the primaryvartype to filter on (for classification.)
 #' @param xm.skymap dataframe to plot, with alpha, delta, and primaryvartype fields
+#' @param hpxLevel hpx level (for legend)
 #'
 #' @return ggplot skymap plot.
 #' @export
@@ -200,27 +201,35 @@ plotAitoffGalacticOverlayBig <-function (bkg, classGroup, xm.skymap, hpxLevel = 
 #' @param bkg background plot we overlay on
 #' @param className name of the primaryvartype to filter on (for classification.)
 #' @param xm.skymap dataframe to plot, with alpha, delta fields
+#' @param hpxLevel expected hpxLevel of the input.
+#' @param alpha name of alpha in Deg in df
+#' @param delta name of delta in Deg in df
 #'
-#' @return ggplot skymap plot overlayd over bacground plot
+#' @return ggplot skymap plot overlayd over background plot
 #' @export
 #' @importFrom dplyr mutate
 #' @importFrom ggplot2 guides
 #'
 #' @examples \dontrun{
 #' # brew chunks on the xm.groups for a massive markdown generation
-#' brewed.chunks = brew_chunks(xm.groups_big,plotAitoffGalacticOverlayBigSingleType,xm.groups_small,xm.skymap)
+#' brewed.chunks =
+#'   brew_chunks(xm.groups_big
+#'   ,plotAitoffGalacticOverlayBigSingleType
+#'    , bkg
+#'    , sosType
+#'    , sosConfigName)
 #' }
-plotAitoffGalacticOverlayBigSingleType <-function (bkg, className, xm.skymap, hpxLevel = 8 )
+plotAitoffGalacticOverlayBigSingleType <-function (bkg, className, xm.skymap, alpha = "ra_deg", delta = "dec_deg", hpxLevel = 8 )
 {
 
 
   skyMapFixed.xm = xm.skymap %>%
     # filter(primaryvartype %in% classSet) %>%
-    mutate(alpha = ifelse(alpha>= 0, alpha, 360 + alpha))
+    mutate(alpha = ifelse(!!as.name(alpha)>= 0, !!as.name(alpha), 360 + !!as.name(alpha)))
 
   if(count(skyMapFixed.xm)==0) return(bkg + ggtitle(paste(className,collapse=" "), subtitle = "No objects."));
 
-  skyMapGalactic.xm = data.frame(skyMapFixed.xm, togalactic(skyMapFixed.xm$alpha, skyMapFixed.xm$delta)) %>%
+  skyMapGalactic.xm = data.frame(skyMapFixed.xm, togalactic(skyMapFixed.xm[[alpha]], skyMapFixed.xm[[delta]])) %>%
     mutate(aitoffGl = aitoffFn(gl,gb)$x, aitoffGb = aitoffFn(gl,gb)$y)
 
   labelClass = paste(className,collapse=" ")
@@ -241,12 +250,6 @@ plotAitoffGalacticOverlayBigSingleType <-function (bkg, className, xm.skymap, hp
     ggtitle(labelClass, subtitle = paste("[",length(skyMapGalactic.xm),"] objects."))  +
 
     new_scale_colour()+
-    # geom_point(data = skyMapGalactic.xm, aes(x=aitoffGl,y=aitoffGb
-    #                                          ,colour = cnt
-    #                                          ,shape = factor(skyMapGalactic.xm$primaryvartype)
-    #                                          # ,fill = factor(skyMapGalactic.xm$primaryvartype)
-    #                                          )
-    #            , size = .5, name = "Types") +
     geom_scattermore(
       data = skyMapGalactic.xm, aes(x=aitoffGl,y=aitoffGb
                                     ,colour = cnt

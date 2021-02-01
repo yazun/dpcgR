@@ -12,6 +12,8 @@ plotAitoffGalacticOverlayBig(bkg, classGroup, xm.skymap, hpxLevel = 8)
 \item{classGroup}{name of the primaryvartype to filter on (for classification.)}
 
 \item{xm.skymap}{dataframe to plot, with alpha, delta, and primaryvartype fields}
+
+\item{hpxLevel}{hpx level (for legend)}
 }
 \value{
 ggplot skymap plot.

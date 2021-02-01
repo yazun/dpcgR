@@ -4,17 +4,26 @@
 \alias{plotAitoffGalacticOverlayBigSingleType}
 \title{Plot overlay distribution in a skyplot with a single class attribute}
 \usage{
-plotAitoffGalacticOverlayBigSingleType(bkg, className, xm.skymap, hpxLevel = 8)
+plotAitoffGalacticOverlayBigSingleType(
+  bkg,
+  className,
+  xm.skymap,
+  alpha = "ra_deg",
+  delta = "dec_deg",
+  hpxLevel = 8
+)
 }
 \arguments{
 \item{bkg}{background plot we overlay on}
 
 \item{className}{name of the primaryvartype to filter on (for classification.)}
 
-\item{xm.skymap}{dataframe to plot, with alpha, delta, and primaryvartype fields}
+\item{xm.skymap}{dataframe to plot, with alpha, delta fields}
+
+\item{hpxLevel}{expected hpxLevel of the input.}
 }
 \value{
-ggplot skymap plot overlayd over bacground plot
+ggplot skymap plot overlayd over background plot
 }
 \description{
 Uses geom_scattermore for plotting.
@@ -22,6 +31,11 @@ Uses geom_scattermore for plotting.
 \examples{
 \dontrun{
 # brew chunks on the xm.groups for a massive markdown generation
-brewed.chunks = brew_chunks(xm.groups_big,plotAitoffGalacticOverlay,xm.groups_small,xm.skymap)
+brewed.chunks =
+  brew_chunks(xm.groups_big
+  ,plotAitoffGalacticOverlayBigSingleType
+   , bkg
+   , sosType
+   , sosConfigName)
 }
 }

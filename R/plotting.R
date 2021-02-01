@@ -48,6 +48,10 @@
 #' }
 plotAitoffGalacticBackground<-function(skyMapD, valueName, titleName, legendName, hpxLevel = 8 ) {
 
+  skyMapD = skyMapD %>% mutate(alpha = ifelse(alpha>= 0, alpha, 360 + alpha))
+  skyMapD = data.frame(skyMapD,togalactic(skyMapD$alpha,skyMapD$delta)) %>%
+    mutate(aitoffGl = aitoffFn(gl,gb)$x, aitoffGb = aitoffFn(gl,gb)$y)
+
   valName = ensym(valueName)
 
   hpxDeg = dfHPX[dfHPX$Level==hpxLevel,"sq_deg"]
@@ -236,7 +240,6 @@ plotAitoffGalacticOverlayBigSingleType <-function (bkg, className, xm.skymap, al
   hpxDeg = dfHPX[dfHPX$Level==hpxLevel,"sq_deg"]
 
   # plot all
-
   # move to non-yellow bands immediately if non-zero, but then the legend is broken
   beginColor = 0.0
 

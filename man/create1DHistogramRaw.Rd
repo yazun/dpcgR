@@ -9,7 +9,7 @@ create1DHistogramRaw(histData, histMetaData)
 \arguments{
 \item{histData}{dataframe with x,val}
 
-\item{metaData}{dataframe with all needed fields: aribute, xlabel , scale = "LINEAR"/"LOG", failed, count for sidplauy purposes}
+\item{histMetaData}{dataframe with all needed fields: aribute, xlabel , scale = "LINEAR"/"LOG", failed, count for sidplauy purposes}
 }
 \value{
 highcharter area histogram

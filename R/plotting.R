@@ -359,7 +359,7 @@ plotCmdAndHR <- function(inData, valueName, catalogName = NULL, pcolour = "red")
 #' Cfreate area hisgoram with cumulatvie sum
 #'
 #' @param histData dataframe with x,val
-#' @param metaData dataframe with all needed fields: aribute, xlabel , scale = "LINEAR"/"LOG", failed, count for sidplauy purposes
+#' @param histMetaData dataframe with all needed fields: aribute, xlabel , scale = "LINEAR"/"LOG", failed, count for sidplauy purposes
 #'
 #' @return highcharter area histogram
 #' @export

@@ -377,7 +377,7 @@ plotCmdAndHR <- function(inData, valueName, catalogName = NULL, pcolour = "red")
 #'   count = length(sosSet[[1]])))
 #'
 #' }
-create1DHistogramRawL <- function(histData, histMetaData) {
+create1DHistogramRaw <- function(histData, histMetaData) {
 
   if(length(which (histData$val != 0 ))!=0) {
     histData<-histData[(min(which ( histData$val != 0 ))-1) : (max( which( histData$val != 0 ))+1),]

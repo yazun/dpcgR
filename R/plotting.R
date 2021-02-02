@@ -344,14 +344,80 @@ plotCmdAndHR <- function(inData, valueName, catalogName = NULL, pcolour = "red")
     theme +
     scale_y_reverse()
 
-
   # pAM = plot(abs_mag_data$median_bp_minus_median_rp, abs_mag_data$median_g_abs, main=paste("Color Absolute Magnitude for", title), pch=20, col=rgb(32,39,247,90,maxColorValue=255), xlab="Median BP - Median RP", ylab="Absolute Median G")
-  lay <- rbind(
-    c(1,1)
-    ,c(1,2)
-  )
+  # lay <- rbind(
+  #   c(1,1)
+  #   ,c(1,2)
+  # )
   grid.arrange(pCM, pAM, nrow = 1 )
-  # pAM
+
+}
 
 
+
+
+#' Cfreate area hisgoram with cumulatvie sum
+#'
+#' @param histData dataframe with x,val
+#' @param metaData dataframe with all needed fields: aribute, xlabel , scale = "LINEAR"/"LOG", failed, count for sidplauy purposes
+#'
+#' @return highcharter area histogram
+#' @export
+#'
+#' @examples \dontrun{
+#' periodData = sosSet %>%
+#' group_by(x = round(period,2)) %>%
+#' summarise(val = n()) %>% ungroup()
+#' create1DHistogramRaw(periodData,
+#'  metaData =
+#'   data.frame(attribute = "Period",
+#'   xlabel = paste(cu7Name, "Period"),
+#'   scale = "LINEAR",
+#'   failed = NaN,
+#'   count = length(sosSet[[1]])))
+#'
+#' }
+create1DHistogramRaw <- function(histData, metaData) {
+
+  if(length(which (histData$val != 0 ))!=0) {
+    histData<-histData[(min(which ( histData$val != 0 ))-1) : (max( which( histData$val != 0 ))+1),]
+  }
+  cumV = cumsum(histData$val)
+  entryRow<-metaData[1,]
+  seriesName<- entryRow[,"attribute"]
+
+  hc <- highchart(type = "chart") %>%
+    hc_title(text = paste(seriesName, "histogram")) %>%
+    hc_subtitle(text = "") %>%
+    hc_exporting(enabled = TRUE) %>%
+    hc_chart(zoomType = "x") %>%
+    hc_xAxis(
+      title = list(text = entryRow$xlabel),
+      x = histData$x,
+      crosshair = TRUE,
+      plotLines = list(
+        list(label = list(text = "median"),
+             color = "#FF0000",
+             width = .2,
+             value = histData$x[which.min(abs(cumV/max(cumV)-0.5))]),
+        list(label = list(text = "mean"),
+             color = "#FF0000",
+             width = .2,
+             value = sum(histData$val*histData$x)/sum(histData$val))
+      ),
+      plotBands = list(
+        list(
+          label = list(text = "IQR", verticalAlign = "middle"),
+          color = "rgba(255, 255, 0, 0.2)",
+          from = histData$x[which.min(abs(cumV/max(cumV)-0.25))],
+          to = histData$x[which.min(abs(cumV/max(cumV)-0.75))]
+        ))) %>%
+    hc_yAxis_multiples(
+      list(type = ifelse( entryRow$scale == "LINEAR","", "logarithmic"), title = list(text = "Count"), crosshair = TRUE),
+      list(showLastLabel = FALSE, opposite = TRUE, title = list(text = "Cumulative"))
+    ) %>%
+    hc_tooltip(pointFormat = "For bin {point.x} there is <b>{point.y}</b> items<br/>", footerFormat = paste("All sources: <b> ", entryRow$count , "</b><p>Failed sources: ",entryRow$failed)) %>%
+    hc_add_series(histData, hcaes(name = seriesName , y = val ), name = seriesName,  type = "area")  %>%
+    hc_add_series(histData, hcaes(name = paste("Cumulative",seriesName) , y =  cumsum(val)) , name =  paste("Cumulative",seriesName), id = "Cumulative",  type = "line", yAxis = 1)
+  hc
 }

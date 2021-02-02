@@ -8,5 +8,8 @@ Helps with DB related task:
 ```R
 require(devtools)
 install_github("yazun/dpcgR", force= TRUE)
+# if needed
+reload(pkgload::inst("dpcgR"))
+
 ```
 

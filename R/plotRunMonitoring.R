@@ -61,7 +61,6 @@ create1DHistogram <- function(histData) {
     hc_add_series(histData, hcaes(name = seriesName , y =  val) , name = seriesName, id = "Transits",  type = "column") %>%
     hc_add_series(histData, hcaes(name = paste("Cumulative",seriesName) , y =  cumsum(val)) , name =  paste("Cumulative",seriesName), id = "Cumulative",  type = "line", yAxis = 1)
 
-
   # knit_print_own.htmlwidget(hc, width="800px", height="600px")
   hc
 }

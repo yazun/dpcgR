@@ -68,9 +68,9 @@ plotAitoffGalacticBackground<-function(skyMapD, valueName, titleName, legendName
     scale_x_reverse() +
     theme +
     # scale_colour_viridis_c(alpha= 0.2, option = "magma", trans="log10" , breaks = waiver()) +
-    scale_colour_gradient(low = 'white', high = 'black', trans='log10', breaks = waiver())
-
+    scale_colour_gradient(low = 'white', high = 'grey50', trans='log10', breaks = waiver())
 }
+
 
 
 #' Plot overlay distribution in a skyplot
@@ -226,7 +226,6 @@ plotAitoffGalacticOverlayBig <-function (bkg, classGroup, xm.skymap, hpxLevel = 
 plotAitoffGalacticOverlayBigSingleType <-function (bkg, className, xm.skymap, alpha = "ra_deg", delta = "dec_deg", hpxLevel = 8 )
 {
 
-
   skyMapFixed.xm = xm.skymap %>%
     # filter(primaryvartype %in% classSet) %>%
     mutate(alpha = ifelse(!!as.name(alpha)>= 0, !!as.name(alpha), 360 + !!as.name(alpha)))
@@ -251,7 +250,6 @@ plotAitoffGalacticOverlayBigSingleType <-function (bkg, className, xm.skymap, al
 
   bkg +
     ggtitle(labelClass, subtitle = paste("[",length(skyMapGalactic.xm$cnt),"] objects."))  +
-
     new_scale_colour()+
     geom_scattermore(
       data = skyMapGalactic.xm, aes(x=aitoffGl,y=aitoffGb

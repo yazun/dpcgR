@@ -377,14 +377,14 @@ plotCmdAndHR <- function(inData, valueName, catalogName = NULL, pcolour = "red")
 #'   count = length(sosSet[[1]])))
 #'
 #' }
-create1DHistogramRaw <- function(histData, metaData) {
+create1DHistogramRawL <- function(histData, histMetaData) {
 
   if(length(which (histData$val != 0 ))!=0) {
     histData<-histData[(min(which ( histData$val != 0 ))-1) : (max( which( histData$val != 0 ))+1),]
   }
   cumV = cumsum(histData$val)
-  entryRow<-metaData[1,]
-  seriesName<- entryRow[,"attribute"]
+  entryRow <- histMetaData[1,]
+  seriesName = entryRow[,"attribute"]
 
   hc <- highchart(type = "chart") %>%
     hc_title(text = paste(seriesName, "histogram")) %>%
@@ -416,8 +416,8 @@ create1DHistogramRaw <- function(histData, metaData) {
       list(type = ifelse( entryRow$scale == "LINEAR","", "logarithmic"), title = list(text = "Count"), crosshair = TRUE),
       list(showLastLabel = FALSE, opposite = TRUE, title = list(text = "Cumulative"))
     ) %>%
-    hc_tooltip(pointFormat = "For bin {point.x} there is <b>{point.y}</b> items<br/>", footerFormat = paste("All sources: <b> ", entryRow$count , "</b><p>Failed sources: ",entryRow$failed)) %>%
-    hc_add_series(histData, hcaes(name = seriesName , y = val ), name = seriesName,  type = "area")  %>%
-    hc_add_series(histData, hcaes(name = paste("Cumulative",seriesName) , y =  cumsum(val)) , name =  paste("Cumulative",seriesName), id = "Cumulative",  type = "line", yAxis = 1)
+    hc_tooltip(pointFormat = "For bin {point.x} there is <b>{point.y}</b> items<br/>", footerFormat = paste("All sources: <b> ", entryRow$count , "</b><p>Failed sources: ",entryRow$failed))  %>%
+    hc_add_series(histData, hcaes( y = val, name = !!seriesName  ), name = seriesName,  id = "X", type = "area")  %>%
+    hc_add_series(histData, hcaes(name = paste("Cumulative",!!seriesName) , y =  cumsum(val)) , name =  paste("Cumulative",seriesName), id = "Cumulative",  type = "line", yAxis = 1)
   hc
 }

@@ -308,7 +308,7 @@ plotCmdAndHR <- function(inData, valueName, catalogName = NULL, pcolour = "red")
   #ABSOLUTE COLOR MAGNITUDE
   wantedData = wantedData %>%
     mutate (median_bp_minus_median_rp = fmedian_bp - fmedian_rp) %>%
-    filter (!is.na(wantedData$median_bp_minus_median_rp) && !is.na(varpi_mas)) %>%
+    filter (!is.na(wantedData$median_bp_minus_median_rp) && !is.na(varpi_mas) && !is.na(fmedian_g)) %>%
     mutate(median_g_abs = fmedian_g + 5 + 5*log10(varpi_mas/1000)) %>%
     filter(!is.na(median_g_abs))  ;
 

@@ -377,7 +377,7 @@ plotCmdAndHR <- function(inData, valueName, catalogName = NULL, pcolour = "red")
 #'   count = length(sosSet[[1]])))
 #'
 #' }
-create1DHistogramRaw <- function(histData, histMetaData) {
+create1DHistogramRaw <- function(histData, histMetaData, plotType = "area") {
 
   if(length(which (histData$val != 0 ))!=0) {
     histData<-histData[(min(which ( histData$val != 0 ))-1) : (max( which( histData$val != 0 ))+1),]
@@ -398,11 +398,11 @@ create1DHistogramRaw <- function(histData, histMetaData) {
       plotLines = list(
         list(label = list(text = "median"),
              color = "#FF0000",
-             width = .2,
+             width = .3,
              value = histData$x[which.min(abs(cumV/max(cumV)-0.5))]),
         list(label = list(text = "mean"),
              color = "#FF0000",
-             width = .2,
+             width = .3,
              value = sum(histData$val*histData$x)/sum(histData$val))
       ),
       plotBands = list(
@@ -413,11 +413,11 @@ create1DHistogramRaw <- function(histData, histMetaData) {
           to = histData$x[which.min(abs(cumV/max(cumV)-0.75))]
         ))) %>%
     hc_yAxis_multiples(
-      list(type = ifelse( entryRow$scale == "LINEAR","", "logarithmic"), title = list(text = "Count"), crosshair = TRUE),
+      list(nid = 3, type = ifelse( entryRow$scale == "LINEAR","", "logarithmic"), title = list(text = "Count"), crosshair = TRUE),
       list(showLastLabel = FALSE, opposite = TRUE, title = list(text = "Cumulative"))
     ) %>%
     hc_tooltip(pointFormat = "For bin {point.x} there is <b>{point.y}</b> items<br/>", footerFormat = paste("All sources: <b> ", entryRow$count , "</b><p>Failed sources: ",entryRow$failed))  %>%
-    hc_add_series(histData, hcaes( y = val, name = !!seriesName  ), name = seriesName,  id = "X", type = "area")  %>%
-    hc_add_series(histData, hcaes(name = paste("Cumulative",!!seriesName) , y =  cumsum(val)) , name =  paste("Cumulative",seriesName), id = "Cumulative",  type = "line", yAxis = 1)
+    hc_add_series(histData, hcaes( y = val, name = !!seriesName  ), name = seriesName,  id = "series", type = plotType, yAxis = 0)  %>%
+    hc_add_series(histData, hcaes(name = paste("Cumulative",!!seriesName) , y =  cumsum(val)) , name =  paste("Cumulative",seriesName), id = "Cumulative",  type = "scatter", yAxis = 1)
   hc
 }

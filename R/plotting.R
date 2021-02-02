@@ -309,7 +309,7 @@ plotCmdAndHR <- function(inData, valueName, catalogName = NULL, pcolour = "red")
   wantedData = wantedData %>%
     mutate (median_bp_minus_median_rp = fmedian_bp - fmedian_rp) %>%
     filter (!is.na(wantedData$median_bp_minus_median_rp) && !is.na(varpi_mas) && !is.na(fmedian_g)) %>%
-    mutate(median_g_abs = fmedian_g + 5 + 5*log10(varpi_mas/1000)) %>%
+    mutate( median_g_abs = fmedian_g + 5 + 5*log10(varpi_mas/1000)) %>%
     filter(!is.na(median_g_abs))  ;
 
   # pCM = plot(wantedData$median_bp_minus_median_rp, wantedData$g_median, main=paste("Color Magnitude for", title), pch=20, col=rgb(32,39,247,90,maxColorValue=255), xlab="median BP - median RP", ylab="Median G")
@@ -335,7 +335,7 @@ plotCmdAndHR <- function(inData, valueName, catalogName = NULL, pcolour = "red")
 
   pAM = ggplot() +
     ggtitle(paste("Color Absolute Magnitude for", title), subtitle = paste(""))  +
-    geom_tile(data = data.bkg.hr, aes(median_bp_minus_median_rp, median_g_abs, fill = log(cnt)), alpha = 1
+    geom_tile(data = data.bkg.hr, aes(x = median_bp_minus_median_rp, y = median_g_abs, fill = log(cnt)), alpha = 1
               ,  width = .01, height = .01, show.legend = FALSE
     ) +
     scale_fill_continuous(low="lightgrey", high="black") +

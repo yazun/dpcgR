@@ -281,19 +281,21 @@ plotAitoffGalacticOverlayBigSingleType <-function (bkg, className, xm.skymap, al
 #' @param inData dataframe with CMD/HR data
 #' @param valueName name of the plots
 #' @param catalogName unused for now. We could show literature ones here.
-#' @param pcolour points colours of the set points.
+#' @param palette viridis palette name for density-colour of the points
+#' @param varpi_over_varpierror_cut cut for HR diagram
 #'
 #' @return
 #' @export
 #' @importFrom dplyr mutate filter
 #' @importFrom ggplot2 guides
 #' @importFrom gridExtra grid.arrange
+#' @importFrom ggpointdensity geom_pointdensity
 #'
 #' @examples \dontrun{
 #' plotCmdAndHR(sosSet, valueName = cu7Name, catalogName = NULL)
 #' }
 #'
-plotCmdAndHR <- function(inData, valueName, catalogName = NULL, pcolour = "red"){
+plotCmdAndHR <- function(inData, valueName, catalogName = NULL, palette = "plasma",  varpi_over_varpierror_cut = 5){
 
   # if(!is.null(catalogName)){
   #     wantedData <- data[which(data$type %in% typeid & data$catalog==catalogName),]
@@ -307,20 +309,23 @@ plotCmdAndHR <- function(inData, valueName, catalogName = NULL, pcolour = "red")
 
   #ABSOLUTE COLOR MAGNITUDE
   wantedData = wantedData %>%
-    mutate (median_bp_minus_median_rp = fmedian_bp - fmedian_rp) %>%
-    filter (!is.na(wantedData$median_bp_minus_median_rp) && !is.na(varpi_mas) && !is.na(fmedian_g)) %>%
-    mutate( median_g_abs = fmedian_g + 5 + 5*log10(varpi_mas/1000)) %>%
-    filter(!is.na(median_g_abs))  ;
+    mutate (median_bp_minus_median_rp = fmedian_bp - fmedian_rp)
+  # filter (!is.na(wantedData$median_bp_minus_median_rp) && !is.na(varpi_mas) && !is.na(fmedian_g)) %>%
+  ;
+
+  wantedHR = wantedData %>% filter( varpi_mas/varpierror_mas > varpi_over_varpierror_cut)  %>%
+    mutate( median_g_abs = fmedian_g + 5 + 5*log10(varpi_mas/1000));
 
   # pCM = plot(wantedData$median_bp_minus_median_rp, wantedData$g_median, main=paste("Color Magnitude for", title), pch=20, col=rgb(32,39,247,90,maxColorValue=255), xlab="median BP - median RP", ylab="Median G")
-  theme <- theme_bw() + theme(plot.title = element_text(hjust = 0.5, size=24),
-                              plot.subtitle = element_text(hjust = 0.5),
+  theme <- theme_bw() + theme(plot.title = element_text(hjust = 0.5, size=30),
+                              plot.subtitle = element_text(hjust = 0.5, size = 25),
                               plot.tag = element_text(hjust = 0.5),
-                              axis.text.x = element_text(size = 15)
+                              axis.text.x = element_text(size = 20),axis.text.y = element_text(size = 25),
+                              axis.title.x = element_text(size = 20),axis.title.y = element_text(size = 25)
   )
 
   pCM = ggplot() +
-    ggtitle(paste("Color Magnitude for", title), subtitle = paste(""))  +
+    ggtitle(paste("Color Magnitude for", title), subtitle = paste(nrow(inData),"sources"))  +
     # geom_tile(data = data.bkg.cmd, aes( x= median_bp_minus_median_rp, y = fmedian_g, fill = (cnt))) +
     geom_tile(data = data.bkg.cmd, aes(median_bp_minus_median_rp, fmedian_g, fill = log(cnt)), alpha = 1
               ,  width = .01, height = .01, show.legend = FALSE
@@ -328,18 +333,24 @@ plotCmdAndHR <- function(inData, valueName, catalogName = NULL, pcolour = "red")
 
     # scale_fill_continuous(low="lightgrey", high="black") +
     scale_fill_gradient(low="lightgrey", high="black") +
-    geom_point(data = wantedData, aes(x = median_bp_minus_median_rp, y =  fmedian_g), shape=16, alpha = .5, colour = pcolour) +
+    # geom_point(data = wantedData, aes(x = median_bp_minus_median_rp, y =  fmedian_g), shape=16, alpha = .5, colour = pcolour) +
+    geom_pointdensity(data = wantedData, aes(x = median_bp_minus_median_rp, y =  fmedian_g), shape=16, alpha = .5, adjust = .1, show.legend = FALSE) +
+    scale_colour_viridis_c(option = palette) +
+    # stat_density_2d(data = wantedData, aes(x = median_bp_minus_median_rp, y =  fmedian_g, fill = ..density..), geom = "raster", contour = FALSE) +
     labs(x = "median BP - median RP", y = "Median G")  +
     theme +
     scale_y_reverse()
 
   pAM = ggplot() +
-    ggtitle(paste("Color Absolute Magnitude for", title), subtitle = paste(""))  +
+    ggtitle(paste("Color Absolute Magnitude for", title), subtitle = paste(nrow(wantedHR),"sources after parallax cut"))  +
     geom_tile(data = data.bkg.hr, aes(x = median_bp_minus_median_rp, y = median_g_abs, fill = log(cnt)), alpha = 1
               ,  width = .01, height = .01, show.legend = FALSE
     ) +
     scale_fill_continuous(low="lightgrey", high="black") +
-    geom_point(data = wantedData, aes(x = median_bp_minus_median_rp, y =  median_g_abs),shape=16, alpha = .5, colour = pcolour) +
+    # geom_point(data = wantedHR, aes(x = median_bp_minus_median_rp, y =  median_g_abs),shape=16, alpha = .5, colour = pcolour) +
+    geom_pointdensity(data = wantedHR, aes(x = median_bp_minus_median_rp, y =  median_g_abs), shape=16, alpha = .5, adjust = .1, show.legend = FALSE) +
+    scale_colour_viridis_c(option = palette) +
+
     labs(x="median BP - median RP", y="Absolute Median G")  +
     theme +
     scale_y_reverse()
@@ -355,11 +366,11 @@ plotCmdAndHR <- function(inData, valueName, catalogName = NULL, pcolour = "red")
 
 
 
-
 #' Cfreate area hisgoram with cumulatvie sum
 #'
 #' @param histData dataframe with x,val
 #' @param histMetaData dataframe with all needed fields: aribute, xlabel , scale = "LINEAR"/"LOG", failed, count for sidplauy purposes
+#' @param plotType type of the plot (scatter,area, column, ...)
 #'
 #' @return highcharter area histogram
 #' @export

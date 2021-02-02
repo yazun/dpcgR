@@ -4,7 +4,13 @@
 \alias{plotCmdAndHR}
 \title{Plots CMD and HR diafgrams in a combo}
 \usage{
-plotCmdAndHR(inData, valueName, catalogName = NULL, pcolour = "red")
+plotCmdAndHR(
+  inData,
+  valueName,
+  catalogName = NULL,
+  palette = "plasma",
+  varpi_over_varpierror_cut = 5
+)
 }
 \arguments{
 \item{inData}{dataframe with CMD/HR data}
@@ -13,7 +19,9 @@ plotCmdAndHR(inData, valueName, catalogName = NULL, pcolour = "red")
 
 \item{catalogName}{unused for now. We could show literature ones here.}
 
-\item{pcolour}{points colours of the set points.}
+\item{palette}{viridis palette name for density-colour of the points}
+
+\item{varpi_over_varpierror_cut}{cut for HR diagram}
 }
 \value{
 

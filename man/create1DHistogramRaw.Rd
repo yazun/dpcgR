@@ -4,7 +4,7 @@
 \alias{create1DHistogramRaw}
 \title{Cfreate area hisgoram with cumulatvie sum}
 \usage{
-create1DHistogramRaw(histData, metaData)
+create1DHistogramRaw(histData, histMetaData)
 }
 \arguments{
 \item{histData}{dataframe with x,val}

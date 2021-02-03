@@ -205,3 +205,4 @@ foldTimeseries <- function(period, times, values, errors, referenceTime, range=1
   );
 }
 
+

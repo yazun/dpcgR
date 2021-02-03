@@ -27,5 +27,6 @@ Imports:
     scattermore,
     ggnewscale,
     gridExtra,
-    ggpointdensity
+    ggpointdensity,
+    DBI
 RoxygenNote: 7.1.1

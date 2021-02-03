@@ -68,7 +68,7 @@ plotAitoffGalacticBackground<-function(skyMapD, valueName, titleName, legendName
     scale_x_reverse() +
     theme +
     # scale_colour_viridis_c(alpha= 0.2, option = "magma", trans="log10" , breaks = waiver()) +
-    scale_colour_gradient(low = 'white', high = 'grey50', trans='log10', breaks = waiver())
+    scale_colour_gradient(low = 'white', high = 'grey45', trans='log10', breaks = waiver())
 }
 
 

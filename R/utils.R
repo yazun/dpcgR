@@ -110,5 +110,21 @@ togalactic <- function (ra, dec) {
 }
 
 
-#
-#
+
+#' Export results to DB and other means with a given name
+#'
+#' @param conn DB connection
+#' @param inData dataframe with results.
+#' @param dbTableNameExport name of the table
+#'
+#' @return TRUE if ok.
+#' @export
+#' @importFrom DBI dbWriteTable
+#'
+#' @examples \dontrun{
+#' exportResults(dbTableNameExport, sosSet)
+#' }
+exportResults<-function(conn = conn, inData, dbTableNameExport ) {
+    dbWriteTable(conn, dbTableNameExport, sosSet, overwrite = T)
+    return(TRUE);
+}

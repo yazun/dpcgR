@@ -206,3 +206,51 @@ foldTimeseries <- function(period, times, values, errors, referenceTime, range=1
 }
 
 
+#' Folding timeseries function for sourceid and tag
+#'
+#' @param period given period
+#' @param times vector of obstimes
+#' @param values vector of values
+#' @param errors  vector of errors
+#' @param referenceTime reference time for folding
+#' @param range range of the folded timeseries
+#' @param insourceid sourceid
+#' @param intag tag
+#'
+#' @return dataframe with folded indexes, phases, magnitudes and errors
+#' @export
+#'
+#' @examples \dontrun{
+#' foldTimeseries(sourcied, tag, period, times, values, errors, referenceTime, range=1.5)
+#' }
+foldTimeseriesFull <- function(insourceid, intag, period, times, values, errors, referenceTime, range=1.5) {
+
+  referenceTime=as.numeric(referenceTime) # otherwise the getPhase does not work
+  phases <- getPhase(referenceTime, times, period);
+
+  indexes <- order(phases);
+  sortPhases <- phases[indexes];
+  sortMag <- values[indexes];
+  sortErrors <- errors[indexes];
+
+  if (range > 1.0) {
+    tsLength <- length(phases);
+    finalLength <- range * tsLength;
+    for (index in c((tsLength+1):finalLength)) {
+      sortPhases[index] <- 1 + sortPhases[index - tsLength];
+      sortMag[index] <- sortMag[index - tsLength];
+      sortErrors[index] <- sortErrors[index - tsLength];
+      indexes[index] <- indexes[index - tsLength]
+    }
+  }
+
+  dret = data.frame(
+    indexes = indexes,
+    phases = sortPhases,
+    magnitudes = sortMag,
+    errors = sortErrors
+  );
+  dret$sourceid = as.character(insourceid[1])
+  dret$tag = as.character(intag[1])
+  dret
+}

@@ -125,6 +125,6 @@ togalactic <- function (ra, dec) {
 #' exportResults(dbTableNameExport, sosSet)
 #' }
 exportResults<-function(conn = conn, inData, dbTableNameExport ) {
-    dbWriteTable(conn, dbTableNameExport, sosSet, overwrite = T)
+    dbWriteTable(conn, dbTableNameExport, inData, overwrite = T)
     return(TRUE);
 }

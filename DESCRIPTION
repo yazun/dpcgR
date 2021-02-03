@@ -1,7 +1,7 @@
 Package: dpcgR
 Type: Package
 Title: Gaia DPCG/CU7 R general data access package
-Version: 0.1.5
+Version: 0.1.6
 Date: 2021-01-28
 Authors@R: c(
   person("Krzysztof", "Nienartowicz", role = c("aut", "cre"), email = "krzysztof.nienartowicz@sedn.ai")
@@ -27,6 +27,5 @@ Imports:
     scattermore,
     ggnewscale,
     gridExtra,
-    ggpointdensity,
-    DBI
+    ggpointdensity
 RoxygenNote: 7.1.1

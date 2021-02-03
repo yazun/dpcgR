@@ -119,12 +119,89 @@ togalactic <- function (ra, dec) {
 #'
 #' @return TRUE if ok.
 #' @export
-#' @importFrom DBI dbWriteTable
+#' @importFrom RPostgres dbWriteTable
 #'
 #' @examples \dontrun{
 #' exportResults(dbTableNameExport, sosSet)
 #' }
 exportResults<-function(conn = conn, inData, dbTableNameExport ) {
-    dbWriteTable(conn, dbTableNameExport, inData, overwrite = T)
+    RPostgres::dbWriteTable(conn, tolower(dbTableNameExport), inData, overwrite = T)
     return(TRUE);
 }
+
+
+#' Function to convert from a database-recovered string to an array of numbers
+#'
+#' @param theString The string containing the array of strings from DB array
+#'
+#' @return a numeric array with the components
+#' @export
+#'
+#' @examples dbstrToNumArray("{1,2,3}")
+dbstrToNumArray <- function(theString) {
+  numbers<-as.numeric(unlist(strsplit(substr(theString,2,nchar(theString)-1), split=",")))
+}
+
+
+#' Function to convert from a database-recovered string to an array of strings
+#'
+#' @param theString The string containing the array of strings from DB array
+#'
+#' @return a string array with the components
+#' @export
+#'
+#' @examples dbstrToStrArray("{a,b,c}")
+dbstrToStrArray <- function(theString) {
+  strings <- as.character(unlist(strsplit(substr(theString, 2, nchar(theString)-1), split=",")))
+  return(strings)
+}
+
+getPhase <- function(referenceTime, times, period) {
+  return(((times - referenceTime) %% period) / period);
+}
+
+
+#' Folding timeseries function
+#'
+#' @param period given period
+#' @param times vector of obstimes
+#' @param values vector of values
+#' @param errors  vector of errors
+#' @param referenceTime reference time for folding
+#' @param range range of the folded timeseries
+#'
+#' @return dataframe with folded indexes, phases, magnitudes and errors
+#' @export
+#'
+#' @examples \dontrun{
+#' foldTimeseries(period, times, values, errors, referenceTime, range=1.5)
+#' }
+foldTimeseries <- function(period, times, values, errors, referenceTime, range=1.5) {
+
+  referenceTime=as.numeric(referenceTime) # otherwise the getPhase does not work
+  phases <- getPhase(referenceTime, times, period);
+
+  indexes <- order(phases);
+  sortPhases <- phases[indexes];
+  sortMag <- values[indexes];
+  sortErrors <- errors[indexes];
+
+  if (range > 1.0) {
+    tsLength <- length(phases);
+    finalLength <- range * tsLength;
+    for (index in c((tsLength+1):finalLength)) {
+      sortPhases[index] <- 1 + sortPhases[index - tsLength];
+      sortMag[index] <- sortMag[index - tsLength];
+      sortErrors[index] <- sortErrors[index - tsLength];
+      indexes[index] <- indexes[index - tsLength]
+    }
+  }
+
+  data.frame(
+    indexes = indexes,
+    phases = sortPhases,
+    magnitudes = sortMag,
+    errors = sortErrors
+  );
+}
+

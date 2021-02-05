@@ -9,7 +9,8 @@ plotCmdAndHR(
   valueName,
   catalogName = NULL,
   palette = "plasma",
-  varpi_over_varpierror_cut = 5
+  varpi_over_varpierror_cut = 5,
+  adjuster = 10
 )
 }
 \arguments{
@@ -22,6 +23,8 @@ plotCmdAndHR(
 \item{palette}{viridis palette name for density-colour of the points}
 
 \item{varpi_over_varpierror_cut}{cut for HR diagram}
+
+\item{adjuster}{factor to adjust smooting for density kernel}
 }
 \value{
 

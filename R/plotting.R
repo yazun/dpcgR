@@ -293,7 +293,7 @@ plotAitoffGalacticOverlayBigSingleType <-function (bkg, className, xm.skymap, al
 #' plotCmdAndHR(sosSet, valueName = cu7Name, catalogName = NULL)
 #' }
 #'
-plotCmdAndHR <- function(inData, valueName, catalogName = NULL, palette = "plasma",  varpi_over_varpierror_cut = 5){
+plotCmdAndHR <- function(inData, valueName, catalogName = NULL, palette = "plasma",  varpi_over_varpierror_cut = 5, adjuster = 10){
 
   # if(!is.null(catalogName)){
   #     wantedData <- data[which(data$type %in% typeid & data$catalog==catalogName),]
@@ -322,7 +322,7 @@ plotCmdAndHR <- function(inData, valueName, catalogName = NULL, palette = "plasm
                               axis.title.x = element_text(size = 20),axis.title.y = element_text(size = 25)
   )
 
-  adjusting = case_when(nrow(wantedData) < 50000 ~ 0.1, TRUE ~ 6)
+  adjusting = case_when(nrow(wantedData) < 50000 ~ 0.1, TRUE ~ adjuster)
   pCM = ggplot() +
     ggtitle(paste("Color Magnitude for", title), subtitle = paste(nrow(inData),"sources"))  +
     # geom_tile(data = data.bkg.cmd, aes( x= median_bp_minus_median_rp, y = fmedian_g, fill = (cnt))) +

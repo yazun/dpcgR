@@ -322,6 +322,7 @@ plotCmdAndHR <- function(inData, valueName, catalogName = NULL, palette = "plasm
                               axis.title.x = element_text(size = 20),axis.title.y = element_text(size = 25)
   )
 
+  adjusting = case_when(nrow(wantedData) < 50000 ~ 0.1, TRUE ~ 3)
   pCM = ggplot() +
     ggtitle(paste("Color Magnitude for", title), subtitle = paste(nrow(inData),"sources"))  +
     # geom_tile(data = data.bkg.cmd, aes( x= median_bp_minus_median_rp, y = fmedian_g, fill = (cnt))) +
@@ -332,7 +333,9 @@ plotCmdAndHR <- function(inData, valueName, catalogName = NULL, palette = "plasm
     # scale_fill_continuous(low="lightgrey", high="black") +
     scale_fill_gradient(low="lightgrey", high="black") +
     # geom_point(data = wantedData, aes(x = median_bp_minus_median_rp, y =  fmedian_g), shape=16, alpha = .5, colour = pcolour) +
-    geom_pointdensity(data = wantedData, aes(x = median_bp_minus_median_rp, y =  fmedian_g), shape=16, alpha = .5, adjust = .1, show.legend = FALSE) +
+    geom_pointdensity(data = wantedData, aes(x = median_bp_minus_median_rp, y =  fmedian_g), shape=16, alpha = .5,
+                      adjust = adjusting,
+                      show.legend = FALSE) +
     scale_colour_viridis_c(option = palette) +
     # stat_density_2d(data = wantedData, aes(x = median_bp_minus_median_rp, y =  fmedian_g, fill = ..density..), geom = "raster", contour = FALSE) +
     labs(x = "median BP - median RP", y = "Median G")  +
@@ -346,7 +349,9 @@ plotCmdAndHR <- function(inData, valueName, catalogName = NULL, palette = "plasm
     ) +
     scale_fill_continuous(low="lightgrey", high="black") +
     # geom_point(data = wantedHR, aes(x = median_bp_minus_median_rp, y =  median_g_abs),shape=16, alpha = .5, colour = pcolour) +
-    geom_pointdensity(data = wantedHR, aes(x = median_bp_minus_median_rp, y =  median_g_abs), shape=16, alpha = .5, adjust = .1, show.legend = FALSE) +
+    geom_pointdensity(data = wantedHR, aes(x = median_bp_minus_median_rp, y =  median_g_abs), shape=16, alpha = .5,
+                      adjust = adjusting,
+                      show.legend = FALSE) +
     scale_colour_viridis_c(option = palette) +
 
     labs(x="median BP - median RP", y="Absolute Median G")  +

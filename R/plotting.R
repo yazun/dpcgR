@@ -294,7 +294,7 @@ plotAitoffGalacticOverlayBigSingleType <-function (bkg, className, xm.skymap, al
 #' plotCmdAndHR(sosSet, valueName = cu7Name, catalogName = NULL)
 #' }
 #'
-plotCmdAndHR <- function(inData, valueName, catalogName = NULL, palette = "plasma",  varpi_over_varpierror_cut = 5, adjuster = 10){
+plotCmdAndHR <- function(inData, valueName, catalogName = NULL, palette = "plasma",  varpi_over_varpierror_cut = 5, adjuster = 5){
 
   # if(!is.null(catalogName)){
   #     wantedData <- data[which(data$type %in% typeid & data$catalog==catalogName),]

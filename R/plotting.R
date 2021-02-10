@@ -1,5 +1,30 @@
 
 
+#' dpcg ggplot2 default plot scheme
+#'
+#' @return simple scheme
+#' @export
+#' @importFrom ggplot2 theme_void element_text waiver
+#' @importFrom ggplot2 ggplot aes ggtitle scale_x_reverse geom_point guide_legend guide_colourbar
+#' @importFrom ggplot2 scale_colour_viridis_d scale_fill_viridis_d scale_shape_manual scale_colour_viridis_c scale_colour_gradient
+#' @importFrom ggnewscale new_scale_colour
+#' @importFrom ggpointdensity geom_pointdensity
+#' @examples {
+#' require(ggplot2)
+#' theme = dpcgTheme()
+#' }
+dpcgTheme <- function() {
+theme <- theme_bw() + theme(plot.title = element_text(hjust = 0.5, size=30),
+                            plot.subtitle = element_text(hjust = 0.5, size = 25),
+                            plot.tag = element_text(hjust = 0.5),
+                            axis.text.x = element_text(size = 20),axis.text.y = element_text(size = 25),
+                            axis.title.x = element_text(size = 20),axis.title.y = element_text(size = 25)
+                            )
+theme
+}
+
+
+
 #' Background skymap plot generator
 #'
 #' Usually used to have a background and to overlay with \code{plotAitoffGalacticOverlay} or \code{plotAitoffGalacticOverlayBig} plots
@@ -208,6 +233,7 @@ plotAitoffGalacticOverlayBig <-function (bkg, classGroup, xm.skymap, hpxLevel = 
 #' @param hpxLevel expected hpxLevel of the input.
 #' @param alpha name of alpha in Deg in df
 #' @param delta name of delta in Deg in df
+#' @param palette name of the viridis palette to use for the type.
 #'
 #' @return ggplot skymap plot overlayd over background plot
 #' @export
@@ -223,7 +249,7 @@ plotAitoffGalacticOverlayBig <-function (bkg, classGroup, xm.skymap, hpxLevel = 
 #'    , sosType
 #'    , sosConfigName)
 #' }
-plotAitoffGalacticOverlayBigSingleType <-function (bkg, className, xm.skymap, alpha = "ra_deg", delta = "dec_deg", hpxLevel = 8 )
+plotAitoffGalacticOverlayBigSingleType <-function (bkg, className, xm.skymap, alpha = "ra_deg", delta = "dec_deg", hpxLevel = 8, palette = "plasma" )
 {
 
   skyMapFixed.xm = xm.skymap %>%
@@ -262,7 +288,7 @@ plotAitoffGalacticOverlayBigSingleType <-function (bkg, className, xm.skymap, al
     # scale_colour_viridis_c(name = "Types", alpha= 0.6, option = "inferno", breaks = waiver(), labels = classSet, begin = beginColor, direction = -1) +
     scale_shape_manual(name = "Type", labels =  className, values = 1:length(className)) +
     #scale_fill_viridis_c(name = "Types", alpha= 0.6, option = "inferno", breaks = waiver(), labels = classSet, begin = beginColor, direction = -1) +
-    scale_colour_viridis_c(name = "Density",  alpha = 0.4, option = "plasma", trans="log10" , breaks = waiver()) +
+    scale_colour_viridis_c(name = "Density",  alpha = 0.4, option = palette, trans="log10" , breaks = waiver()) +
     guides(colour = guide_colourbar(
       title = bquote(.("Sources") ~ " per " ~ (.(hpxDeg) ~ Deg^2)  ), barwidth = 1, barheight = 20, title.position = "bottom", order = 2, title.hjust = 0
       ,title.theme = element_text(size = 15,angle = 0)
@@ -272,9 +298,7 @@ plotAitoffGalacticOverlayBigSingleType <-function (bkg, className, xm.skymap, al
     )
 }
 
-
-
-#' Plots CMD and HR diafgrams in a combo
+#' Plots CMD and HR diagrams in a combo
 #'
 #' @param inData dataframe with CMD/HR data
 #' @param valueName name of the plots
@@ -283,7 +307,7 @@ plotAitoffGalacticOverlayBigSingleType <-function (bkg, className, xm.skymap, al
 #' @param varpi_over_varpierror_cut cut for HR diagram
 #' @param adjuster factor to adjust smooting for density kernel
 #'
-#' @return
+#' @return two-plot ggplot with CMD and HR
 #' @export
 #' @importFrom dplyr mutate filter
 #' @importFrom ggplot2 guides

@@ -10,7 +10,8 @@ plotAitoffGalacticOverlayBigSingleType(
   xm.skymap,
   alpha = "ra_deg",
   delta = "dec_deg",
-  hpxLevel = 8
+  hpxLevel = 8,
+  palette = "plasma"
 )
 }
 \arguments{
@@ -25,6 +26,8 @@ plotAitoffGalacticOverlayBigSingleType(
 \item{delta}{name of delta in Deg in df}
 
 \item{hpxLevel}{expected hpxLevel of the input.}
+
+\item{palette}{name of the viridis palette to use for the type.}
 }
 \value{
 ggplot skymap plot overlayd over background plot

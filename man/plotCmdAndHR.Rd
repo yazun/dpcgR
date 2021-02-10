@@ -2,7 +2,7 @@
 % Please edit documentation in R/plotting.R
 \name{plotCmdAndHR}
 \alias{plotCmdAndHR}
-\title{Plots CMD and HR diafgrams in a combo}
+\title{Plots CMD and HR diagrams in a combo}
 \usage{
 plotCmdAndHR(
   inData,
@@ -10,7 +10,7 @@ plotCmdAndHR(
   catalogName = NULL,
   palette = "plasma",
   varpi_over_varpierror_cut = 5,
-  adjuster = 10
+  adjuster = 5
 )
 }
 \arguments{
@@ -27,10 +27,10 @@ plotCmdAndHR(
 \item{adjuster}{factor to adjust smooting for density kernel}
 }
 \value{
-
+two-plot ggplot with CMD and HR
 }
 \description{
-Plots CMD and HR diafgrams in a combo
+Plots CMD and HR diagrams in a combo
 }
 \examples{
 \dontrun{

@@ -234,6 +234,7 @@ plotAitoffGalacticOverlayBig <-function (bkg, classGroup, xm.skymap, hpxLevel = 
 #' @param alpha name of alpha in Deg in df
 #' @param delta name of delta in Deg in df
 #' @param palette name of the viridis palette to use for the type.
+#' @param adjuster weight for density smoothing by geom_pointdensity
 #'
 #' @return ggplot skymap plot overlayd over background plot
 #' @export
@@ -249,7 +250,7 @@ plotAitoffGalacticOverlayBig <-function (bkg, classGroup, xm.skymap, hpxLevel = 
 #'    , sosType
 #'    , sosConfigName)
 #' }
-plotAitoffGalacticOverlayBigSingleType <-function (bkg, className, xm.skymap, alpha = "ra_deg", delta = "dec_deg", hpxLevel = 8, palette = "plasma" )
+plotAitoffGalacticOverlayBigSingleType <-function (bkg, className, xm.skymap, alpha = "ra_deg", delta = "dec_deg", hpxLevel = 8, palette = "plasma", adjuster = 6 )
 {
 
   skyMapFixed.xm = xm.skymap %>%
@@ -268,6 +269,8 @@ plotAitoffGalacticOverlayBigSingleType <-function (bkg, className, xm.skymap, al
   # move to non-yellow bands immediately if non-zero, but then the legend is broken
   beginColor = 0.0
 
+  adjusting = case_when(nrow(wantedData) < 50000 ~ 0.1, TRUE ~ adjuster)
+
   at.x =  outer(1:9, 10^(1:6))[1,]
   maxVal = max(xm.skymap[["cnt"]])
   lab.x <- c(ifelse(log10(at.x) %% 1 == 0, at.x, NA), maxVal)
@@ -277,18 +280,23 @@ plotAitoffGalacticOverlayBigSingleType <-function (bkg, className, xm.skymap, al
   bkg +
     ggtitle(labelClass, subtitle = paste("[",length(skyMapGalactic.xm$cnt),"] objects."))  +
     new_scale_colour()+
-    geom_scattermore(
-      data = skyMapGalactic.xm, aes(x=aitoffGl,y=aitoffGb
-                                    ,colour = cnt
-                                    ,shape = factor(className)
-                                    # ,fill = factor(skyMapGalactic.xm$primaryvartype)
-      )
-      , size = 1.6, name = "Types", alpha = .4
-      , pixels = c(1920,1080), pointsize = 1.6, interpolate = FALSE) +
-    # scale_colour_viridis_c(name = "Types", alpha= 0.6, option = "inferno", breaks = waiver(), labels = classSet, begin = beginColor, direction = -1) +
-    scale_shape_manual(name = "Type", labels =  className, values = 1:length(className)) +
-    #scale_fill_viridis_c(name = "Types", alpha= 0.6, option = "inferno", breaks = waiver(), labels = classSet, begin = beginColor, direction = -1) +
-    scale_colour_viridis_c(name = "Density",  alpha = 0.4, option = palette, trans="log10" , breaks = waiver()) +
+    # geom_scattermore(
+    #   data = skyMapGalactic.xm, aes(x=aitoffGl,y=aitoffGb
+    #                                 ,colour = cnt
+    #                                 ,shape = factor(className)
+    #                                 # ,fill = factor(skyMapGalactic.xm$primaryvartype)
+    #   )
+    #   , size = 1.6, name = "Types", alpha = .4
+    #   , pixels = c(1920,1080), pointsize = 1.6, interpolate = FALSE) +
+    # # scale_colour_viridis_c(name = "Types", alpha= 0.6, option = "inferno", breaks = waiver(), labels = classSet, begin = beginColor, direction = -1) +
+    # scale_shape_manual(name = "Type", labels =  className, values = 1:length(className)) +
+    # #scale_fill_viridis_c(name = "Types", alpha= 0.6, option = "inferno", breaks = waiver(), labels = classSet, begin = beginColor, direction = -1) +
+    # scale_colour_viridis_c(name = "Density",  alpha = 0.4, option = palette, trans="log10" , breaks = waiver()) +
+    geom_pointdensity(data= skyMapGalactic.xm, aes(x=aitoffGl,y=aitoffGb), shape=16, alpha = .5,
+                    adjust = adjuster,
+                    show.legend = FALSE
+    ) +
+    scale_colour_viridis_c(option = palette) +
     guides(colour = guide_colourbar(
       title = bquote(.("Sources") ~ " per " ~ (.(hpxDeg) ~ Deg^2)  ), barwidth = 1, barheight = 20, title.position = "bottom", order = 2, title.hjust = 0
       ,title.theme = element_text(size = 15,angle = 0)

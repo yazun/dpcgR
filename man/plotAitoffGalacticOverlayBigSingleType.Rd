@@ -11,7 +11,8 @@ plotAitoffGalacticOverlayBigSingleType(
   alpha = "ra_deg",
   delta = "dec_deg",
   hpxLevel = 8,
-  palette = "plasma"
+  palette = "plasma",
+  adjuster = 6
 )
 }
 \arguments{
@@ -28,6 +29,8 @@ plotAitoffGalacticOverlayBigSingleType(
 \item{hpxLevel}{expected hpxLevel of the input.}
 
 \item{palette}{name of the viridis palette to use for the type.}
+
+\item{adjuster}{weight for density smoothing by geom_pointdensity}
 }
 \value{
 ggplot skymap plot overlayd over background plot

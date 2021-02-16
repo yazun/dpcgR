@@ -260,7 +260,7 @@ plotAitoffGalacticOverlayBigSingleType <-function (bkg, className, xm.skymap, al
   if(count(skyMapFixed.xm)==0) return(bkg + ggtitle(paste(className,collapse=" "), subtitle = "No objects."));
 
   skyMapGalactic.xm = data.frame(skyMapFixed.xm, togalactic(skyMapFixed.xm[[alpha]], skyMapFixed.xm[[delta]])) %>%
-    mutate(aitoffGl = aitoffFn(gl,gb)$x, aitoffGb = aitoffFn(gl,gb)$y)
+    mutate(aitoffG = aitoffFn(gl,gb))
 
   labelClass = paste(className,collapse=" ")
   hpxDeg = dfHPX[dfHPX$Level==hpxLevel,"sq_deg"]
@@ -278,8 +278,8 @@ plotAitoffGalacticOverlayBigSingleType <-function (bkg, className, xm.skymap, al
   my_breaks = lab.x
 
   bkg +
-    ggtitle(labelClass, subtitle = paste("[",length(skyMapGalactic.xm$cnt),"] objects."))  +
-    new_scale_colour()+
+    ggtitle(labelClass, subtitle = paste("[",length(skyMapGalactic.xm$sourceid),"] objects."))  +
+    new_scale_colour() +
     # geom_scattermore(
     #   data = skyMapGalactic.xm, aes(x=aitoffGl,y=aitoffGb
     #                                 ,colour = cnt
@@ -291,11 +291,11 @@ plotAitoffGalacticOverlayBigSingleType <-function (bkg, className, xm.skymap, al
     # # scale_colour_viridis_c(name = "Types", alpha= 0.6, option = "inferno", breaks = waiver(), labels = classSet, begin = beginColor, direction = -1) +
     # scale_shape_manual(name = "Type", labels =  className, values = 1:length(className)) +
     # #scale_fill_viridis_c(name = "Types", alpha= 0.6, option = "inferno", breaks = waiver(), labels = classSet, begin = beginColor, direction = -1) +
-    # scale_colour_viridis_c(name = "Density",  alpha = 0.4, option = palette, trans="log10" , breaks = waiver()) +
-    geom_pointdensity(data= skyMapGalactic.xm, aes(x=aitoffGl,y=aitoffGb), shape=16, alpha = .5,
+  # scale_colour_viridis_c(name = "Density",  alpha = 0.4, option = palette, trans="log10" , breaks = waiver()) +
+  geom_pointdensity(data= skyMapGalactic.xm, aes(x=aitoffG$x,y=aitoffG$y), shape=16, alpha = .5,
                     adjust = adjuster,
-                    show.legend = FALSE
-    ) +
+                    show.legend = TRUE
+  ) +
     scale_colour_viridis_c(option = palette) +
     guides(colour = guide_colourbar(
       title = bquote(.("Sources") ~ " per " ~ (.(hpxDeg) ~ Deg^2)  ), barwidth = 1, barheight = 20, title.position = "bottom", order = 2, title.hjust = 0

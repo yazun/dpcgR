@@ -269,7 +269,7 @@ plotAitoffGalacticOverlayBigSingleType <-function (bkg, className, xm.skymap, al
   # move to non-yellow bands immediately if non-zero, but then the legend is broken
   beginColor = 0.0
 
-  adjusting = case_when(nrow(wantedData) < 50000 ~ 0.1, TRUE ~ adjuster)
+  adjusting = case_when(nrow(skyMapGalactic.xm ) < 50000 ~ 0.1, TRUE ~ adjuster)
 
   at.x =  outer(1:9, 10^(1:6))[1,]
   maxVal = max(xm.skymap[["cnt"]])

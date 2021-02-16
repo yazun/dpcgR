@@ -38,7 +38,7 @@ theme
 #' @return ggplot with Aitoff background
 #' @export
 #' @importFrom dplyr ensym
-#' @importFrom ggplot2 theme_void element_text waiver
+#' @importFrom ggplot2 theme theme_void element_text waiver
 #' @importFrom ggplot2 ggplot aes ggtitle scale_x_reverse geom_point guide_legend guide_colourbar
 #' @importFrom ggplot2 scale_colour_viridis_d scale_fill_viridis_d scale_shape_manual scale_colour_viridis_c scale_colour_gradient
 #' @importFrom ggnewscale new_scale_colour

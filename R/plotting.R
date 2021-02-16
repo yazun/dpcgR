@@ -318,7 +318,7 @@ plotAitoffGalacticOverlayBigSingleType <-function (bkg, className, xm.skymap, al
 #' @return two-plot ggplot with CMD and HR
 #' @export
 #' @importFrom dplyr mutate filter
-#' @importFrom ggplot2 guides
+#' @importFrom ggplot2 guides theme
 #' @importFrom gridExtra grid.arrange
 #' @importFrom ggpointdensity geom_pointdensity
 #'
@@ -348,7 +348,7 @@ plotCmdAndHR <- function(inData, valueName, catalogName = NULL, palette = "plasm
     mutate( median_g_abs = fmedian_g + 5 + 5*log10(varpi_mas/1000));
 
   # pCM = plot(wantedData$median_bp_minus_median_rp, wantedData$g_median, main=paste("Color Magnitude for", title), pch=20, col=rgb(32,39,247,90,maxColorValue=255), xlab="median BP - median RP", ylab="Median G")
-  theme <- theme_bw() + theme(plot.title = element_text(hjust = 0.5, size=30),
+  theme <- theme_bw() + ggplot2::theme(plot.title = element_text(hjust = 0.5, size=30),
                               plot.subtitle = element_text(hjust = 0.5, size = 25),
                               plot.tag = element_text(hjust = 0.5),
                               axis.text.x = element_text(size = 20),axis.text.y = element_text(size = 25),

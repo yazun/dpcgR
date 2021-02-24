@@ -4,7 +4,7 @@
 \alias{create1DHistogramRaw}
 \title{Cfreate area hisgoram with cumulatvie sum}
 \usage{
-create1DHistogramRaw(histData, histMetaData, plotType = "area")
+create1DHistogramRaw(histData, histMetaData, plotType = "area", xaxisType = "")
 }
 \arguments{
 \item{histData}{dataframe with x,val}
@@ -12,6 +12,8 @@ create1DHistogramRaw(histData, histMetaData, plotType = "area")
 \item{histMetaData}{dataframe with all needed fields: aribute, xlabel , scale = "LINEAR"/"LOG", failed, count for sidplauy purposes}
 
 \item{plotType}{type of the plot (scatter,area, column, ...)}
+
+\item{xaxisType}{put "logarithmic" is needed for X-axis}
 }
 \value{
 highcharter area histogram

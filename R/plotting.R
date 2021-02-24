@@ -407,6 +407,7 @@ plotCmdAndHR <- function(inData, valueName, catalogName = NULL, palette = "plasm
 #' @param histData dataframe with x,val
 #' @param histMetaData dataframe with all needed fields: aribute, xlabel , scale = "LINEAR"/"LOG", failed, count for sidplauy purposes
 #' @param plotType type of the plot (scatter,area, column, ...)
+#' @param xaxisType put "logarithmic" is needed for X-axis
 #'
 #' @return highcharter area histogram
 #' @export
@@ -424,7 +425,7 @@ plotCmdAndHR <- function(inData, valueName, catalogName = NULL, palette = "plasm
 #'   count = length(sosSet[[1]])))
 #'
 #' }
-create1DHistogramRaw <- function(histData, histMetaData, plotType = "area") {
+create1DHistogramRaw <- function(histData, histMetaData, plotType = "area", xaxisType = "") {
 
   if(length(which (histData$val != 0 ))!=0) {
     histData<-histData[(min(which ( histData$val != 0 ))-1) : (max( which( histData$val != 0 ))+1),]
@@ -439,6 +440,7 @@ create1DHistogramRaw <- function(histData, histMetaData, plotType = "area") {
     hc_exporting(enabled = TRUE) %>%
     hc_chart(zoomType = "x") %>%
     hc_xAxis(
+      type = xaxisType,
       title = list(text = entryRow$xlabel),
       x = histData$x,
       crosshair = TRUE,

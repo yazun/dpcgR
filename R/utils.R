@@ -114,8 +114,9 @@ togalactic <- function (ra, dec) {
 #' Export results to DB and other means with a given name
 #'
 #' @param conn DB connection
-#' @param inData dataframe with results.
+#' @param schema DB schema to create table in
 #' @param dbTableNameExport name of the table
+#' @param inData dataframe with results.
 #'
 #' @return TRUE if ok.
 #' @export
@@ -124,9 +125,12 @@ togalactic <- function (ra, dec) {
 #' @examples \dontrun{
 #' exportResults(dbTableNameExport, sosSet)
 #' }
-exportResults<-function(conn = conn, inData, dbTableNameExport ) {
-    RPostgres::dbWriteTable(conn, tolower(dbTableNameExport), inData, overwrite = T)
-    return(TRUE);
+exportResults<-function(conn = conn, schema , dbTableNameExport, inData ) {
+
+  dbTableNameExport = paste(schema,tolower(dbTableNameExport), sep="")
+  tableId = Id(schema = schema, table = tolower(dbTableNameExport))
+  dbWriteTable(conn, tableId, inData, overwrite = T)
+  return(TRUE);
 }
 
 

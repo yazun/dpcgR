@@ -4,14 +4,16 @@
 \alias{exportResults}
 \title{Export results to DB and other means with a given name}
 \usage{
-exportResults(conn = conn, inData, dbTableNameExport)
+exportResults(conn = conn, schema, dbTableNameExport, inData)
 }
 \arguments{
 \item{conn}{DB connection}
 
-\item{inData}{dataframe with results.}
+\item{schema}{DB schema to create table in}
 
 \item{dbTableNameExport}{name of the table}
+
+\item{inData}{dataframe with results.}
 }
 \value{
 TRUE if ok.

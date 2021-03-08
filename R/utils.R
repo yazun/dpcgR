@@ -120,7 +120,7 @@ togalactic <- function (ra, dec) {
 #'
 #' @return TRUE if ok.
 #' @export
-#' @importFrom RPostgres dbWriteTable
+#' @importFrom RPostgres dbWriteTable Id
 #'
 #' @examples \dontrun{
 #' exportResults(dbTableNameExport, sosSet)

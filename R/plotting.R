@@ -313,7 +313,7 @@ plotAitoffGalacticOverlayBigSingleType <-function (bkg, className, xm.skymap, al
 #' @param catalogName unused for now. We could show literature ones here.
 #' @param palette viridis palette name for density-colour of the points
 #' @param varpi_over_varpierror_cut cut for HR diagram
-#' @param adjuster factor to adjust smooting for density kernel
+#' @param adjuster factor to adjust smoothing for density kernel
 #'
 #' @return two-plot ggplot with CMD and HR
 #' @export

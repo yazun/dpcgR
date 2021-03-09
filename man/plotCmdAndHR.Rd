@@ -24,7 +24,7 @@ plotCmdAndHR(
 
 \item{varpi_over_varpierror_cut}{cut for HR diagram}
 
-\item{adjuster}{factor to adjust smooting for density kernel}
+\item{adjuster}{factor to adjust smoothing for density kernel}
 }
 \value{
 two-plot ggplot with CMD and HR

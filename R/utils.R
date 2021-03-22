@@ -127,9 +127,9 @@ togalactic <- function (ra, dec) {
 #' }
 exportResults<-function(conn = conn, schema , dbTableNameExport, inData ) {
 
-  dbTableNameExport = paste(schema,tolower(dbTableNameExport), sep="")
+
   tableId = Id(schema = schema, table = tolower(dbTableNameExport))
-  dbWriteTable(conn, tableId, inData, overwrite = T)
+  RPostgres::dbWriteTable(conn, tableId, inData, overwrite = T)
   return(TRUE);
 }
 

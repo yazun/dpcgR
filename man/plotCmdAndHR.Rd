@@ -10,7 +10,9 @@ plotCmdAndHR(
   catalogName = NULL,
   palette = "plasma",
   varpi_over_varpierror_cut = 5,
-  adjuster = 5
+  adjuster = 5,
+  data.bkg.hr = data.bkg.hr,
+  data.bkg.cmd = data.bkg.cmd
 )
 }
 \arguments{
@@ -25,6 +27,10 @@ plotCmdAndHR(
 \item{varpi_over_varpierror_cut}{cut for HR diagram}
 
 \item{adjuster}{factor to adjust smoothing for density kernel}
+
+\item{data.bkg.hr}{data for Hr diagram}
+
+\item{data.bkg.cmd}{data for cmd diagram}
 }
 \value{
 two-plot ggplot with CMD and HR

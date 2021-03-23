@@ -314,6 +314,8 @@ plotAitoffGalacticOverlayBigSingleType <-function (bkg, className, xm.skymap, al
 #' @param palette viridis palette name for density-colour of the points
 #' @param varpi_over_varpierror_cut cut for HR diagram
 #' @param adjuster factor to adjust smoothing for density kernel
+#' @param data.bkg.hr data for Hr diagram
+#' @param data.bkg.cmd data for cmd diagram
 #'
 #' @return two-plot ggplot with CMD and HR
 #' @export
@@ -326,7 +328,7 @@ plotAitoffGalacticOverlayBigSingleType <-function (bkg, className, xm.skymap, al
 #' plotCmdAndHR(sosSet, valueName = cu7Name, catalogName = NULL)
 #' }
 #'
-plotCmdAndHR <- function(inData, valueName, catalogName = NULL, palette = "plasma",  varpi_over_varpierror_cut = 5, adjuster = 5){
+plotCmdAndHR <- function(inData, valueName, catalogName = NULL, palette = "plasma",  varpi_over_varpierror_cut = 5, adjuster = 5, data.bkg.hr = data.bkg.hr, data.bkg.cmd = data.bkg.cmd){
 
   # if(!is.null(catalogName)){
   #     wantedData <- data[which(data$type %in% typeid & data$catalog==catalogName),]

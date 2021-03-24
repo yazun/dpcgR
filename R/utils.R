@@ -138,7 +138,7 @@ exportResults<-function(conn = conn, schema , dbTableNameExport, inData, variTyp
 
   sqlDelete = sprintf("delete from %s.%s where varitype = '%s'",schema, cumulativeTable, varitype)
   dbExecute(conn,sqlDelete)
-  sqlInsert = sprintf("insert into %s.%s select  sourceid,'%s' from %s.%s",schema, cumulativeTable, variType,schema , fullTableName)
+  sqlInsert = sprintf("insert into %s.%s select  sourceid,'%s' from %s.%s",schema, cumulativeTable, variType, schema , fullTableName)
   return(dbExecute(conn,sqlInsert))
 }
 

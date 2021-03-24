@@ -129,7 +129,7 @@ togalactic <- function (ra, dec) {
 #' exportResults(dbTableNameExport, sosSet)
 #' }
 exportResults<-function(conn = conn, schema , dbTableNameExport, inData, variType, cumulativeTable = "dr3_common_export", prefix = "dr3_validated_" ) {
-
+  library(DBI)
   # export data to a single table with full selection
   fullTableName = paste(prefix,tolower(dbTableNameExport),sep="")
   tableId = Id(schema = schema, table = fullTableName)
@@ -137,7 +137,7 @@ exportResults<-function(conn = conn, schema , dbTableNameExport, inData, variTyp
   #but also ingest the digest to a single table for the global view
 
   sqlDelete = sprintf("delete from %s.%s where varitype = '%s'",schema, cumulativeTable, variType)
-  dbExecute(conn,sqlDelete)
+  DBI::dbExecute(conn,sqlDelete)
   sqlInsert = sprintf("insert into %s.%s select  sourceid,'%s' from %s.%s",schema, cumulativeTable, variType, schema , fullTableName)
   return(dbExecute(conn,sqlInsert))
 }

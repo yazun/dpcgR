@@ -117,6 +117,9 @@ togalactic <- function (ra, dec) {
 #' @param schema DB schema to create table in
 #' @param dbTableNameExport name of the table
 #' @param inData dataframe with results.
+#' @param variType name of the type
+#' @param cumulativeTable name of the cumulative table, where we append sourceid and variType.
+#' @param prefix prefix of the name of the snapshot table
 #'
 #' @return TRUE if ok.
 #' @export
@@ -125,12 +128,18 @@ togalactic <- function (ra, dec) {
 #' @examples \dontrun{
 #' exportResults(dbTableNameExport, sosSet)
 #' }
-exportResults<-function(conn = conn, schema , dbTableNameExport, inData ) {
+exportResults<-function(conn = conn, schema , dbTableNameExport, inData, variType, cumulativeTable = "dr3_common_export", prefix = "dr3_validated_" ) {
 
-
-  tableId = Id(schema = schema, table = tolower(dbTableNameExport))
+  # export data to a single table with full selection
+  fullTableName = paste(prefix,tolower(dbTableNameExport),sep="")
+  tableId = Id(schema = schema, table = fullTableName)
   RPostgres::dbWriteTable(conn, tableId, inData, overwrite = T)
-  return(TRUE);
+  #but also ingest the digest to a single table for the global view
+
+  sqlDelete = sprintf("delete from %s.%s where varitype = '%s'",schema, cumulativeTable, varitype)
+  dbExecute(conn,sqlDelete)
+  sqlInsert = sprintf("insert into %s.%s select  sourceid,'%s' from %s.%s",schema, cumulativeTable, variType,schema , fullTableName)
+  return(dbExecute(conn,sqlInsert))
 }
 
 

@@ -4,7 +4,15 @@
 \alias{exportResults}
 \title{Export results to DB and other means with a given name}
 \usage{
-exportResults(conn = conn, schema, dbTableNameExport, inData)
+exportResults(
+  conn = conn,
+  schema,
+  dbTableNameExport,
+  inData,
+  variType,
+  cumulativeTable = "dr3_common_export",
+  prefix = "dr3_validated_"
+)
 }
 \arguments{
 \item{conn}{DB connection}
@@ -14,6 +22,12 @@ exportResults(conn = conn, schema, dbTableNameExport, inData)
 \item{dbTableNameExport}{name of the table}
 
 \item{inData}{dataframe with results.}
+
+\item{variType}{name of the type}
+
+\item{cumulativeTable}{name of the cumulative table, where we append sourceid and variType.}
+
+\item{prefix}{prefix of the name of the snapshot table}
 }
 \value{
 TRUE if ok.

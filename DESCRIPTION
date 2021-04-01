@@ -1,8 +1,8 @@
 Package: dpcgR
 Type: Package
 Title: Gaia DPCG/CU7 R general data access package
-Version: 0.1.11
-Date: 2021-01-28
+Version: 0.1.12
+Date: 2021-04-02
 Authors@R: c(
   person("Krzysztof", "Nienartowicz", role = c("aut", "cre"), email = "krzysztof.nienartowicz@sedn.ai")
   )

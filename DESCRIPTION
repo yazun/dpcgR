@@ -7,7 +7,7 @@ Authors@R: c(
   person("Krzysztof", "Nienartowicz", role = c("aut", "cre"), email = "krzysztof.nienartowicz@sedn.ai")
   )
 Maintainer: Krzysztof Nienartowicz <krzysztof.nienartowicz@sedn.ai>
-Description: Low-level helpers to access DPCG data system. Number of function to help visualize Run results.
+Description: Low-level helpers to access DPCG data system. Number of functions to help visualize Run results, export data to DB etc.
 License: MIT + file LICENSE
 Encoding: UTF-8
 LazyData: true

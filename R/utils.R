@@ -162,18 +162,18 @@ exportResults<-function(conn = conn, schema , dbTableNameExport, inData, variTyp
 #' @importFrom DBI dbExecute
 #'
 #' @examples \dontrun{
-#' exportResults(dbTableNameExport, sosSet)
+#' exportClassificationResults(dbTableNameExport, classSet, scoreName = "scoreColumn")
 #' }
 exportClassificationResults<-function(conn = conn, schema , dbTableNameExport, inData, variType, scoreName = "score", cumulativeTable = "dr3_classification_export", prefix = "dr3_validated_" ) {
 
   # export data to a single table with full selection
   fullTableName = paste(prefix,tolower(dbTableNameExport),sep="")
   tableId = Id(schema = schema, table = fullTableName)
+  inData = inData %>% mutate(sourceid = as.integer64(sourceid));
   RPostgres::dbWriteTable(conn, tableId, inData, overwrite = T)
   #but also ingest the digest to a single table for the global view
 
 
-  inData = inData %>% mutate(sourceid = as.integer64(sourceid));
   sqlDelete = sprintf("delete from %s.%s where varitype = '%s'",schema, cumulativeTable, variType)
   DBI::dbExecute(conn,sqlDelete)
   sqlInsert = sprintf("insert into %s.%s select distinct on (sourceid) sourceid,'%s',%s from %s.%s", schema, cumulativeTable, variType, scoreName, schema , fullTableName)

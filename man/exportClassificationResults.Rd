@@ -40,6 +40,6 @@ Export results to prefix||variType table and to cumulativeTable classification t
 }
 \examples{
 \dontrun{
-exportResults(dbTableNameExport, sosSet)
+exportClassificationResults(dbTableNameExport, classSet, scoreName = "scoreColumn")
 }
 }

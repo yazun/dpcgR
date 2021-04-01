@@ -2,14 +2,13 @@
 % Please edit documentation in R/utils.R
 \name{exportClassificationResults}
 \alias{exportClassificationResults}
-\title{Export results to prefix||variType table and to cumulativeTable classification table and other means with a given name}
+\title{Export results to prefix||variType table and to cumulativeTable classification table and other means with a given name.}
 \usage{
 exportClassificationResults(
   conn = conn,
   schema,
   dbTableNameExport,
   inData,
-  variType,
   scoreName = "score",
   cumulativeTable = "dr3_classification_export",
   prefix = "dr3_validated_"
@@ -22,9 +21,7 @@ exportClassificationResults(
 
 \item{dbTableNameExport}{name of the table}
 
-\item{inData}{dataframe with results.}
-
-\item{variType}{name of the type}
+\item{inData}{dataframe with results: must include sourceid, varitype and score fields.}
 
 \item{scoreName}{name of the score field in the data frame provided}
 
@@ -36,7 +33,7 @@ exportClassificationResults(
 TRUE if ok.
 }
 \description{
-Export results to prefix||variType table and to cumulativeTable classification table and other means with a given name
+Export results to prefix||variType table and to cumulativeTable classification table and other means with a given name.
 }
 \examples{
 \dontrun{

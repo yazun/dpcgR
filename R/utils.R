@@ -145,17 +145,15 @@ exportResults<-function(conn = conn, schema , dbTableNameExport, inData, variTyp
 
 
 
-#' Export results to prefix||variType table and to cumulativeTable classification table and other means with a given name
+#' Export results to prefix||variType table and to cumulativeTable classification table and other means with a given name.
 #'
 #' @param conn DB connection
 #' @param schema DB schema to create table in
 #' @param dbTableNameExport name of the table
-#' @param inData dataframe with results.
-#' @param variType name of the type
+#' @param inData dataframe with results: must include sourceid, varitype and score fields.
 #' @param scoreName name of the score field in the data frame provided
 #' @param cumulativeTable name of the cumulative table, where we append sourceid and variType.
 #' @param prefix prefix of the name of the snapshot table
-#'
 #' @return TRUE if ok.
 #' @export
 #' @importFrom RPostgres dbWriteTable Id
@@ -164,7 +162,7 @@ exportResults<-function(conn = conn, schema , dbTableNameExport, inData, variTyp
 #' @examples \dontrun{
 #' exportClassificationResults(dbTableNameExport, classSet, scoreName = "scoreColumn")
 #' }
-exportClassificationResults<-function(conn = conn, schema , dbTableNameExport, inData, variType, scoreName = "score", cumulativeTable = "dr3_classification_export", prefix = "dr3_validated_" ) {
+exportClassificationResults<-function(conn = conn, schema , dbTableNameExport, inData, scoreName = "score", cumulativeTable = "dr3_classification_export", prefix = "dr3_validated_" ) {
 
   # export data to a single table with full selection
   fullTableName = paste(prefix,tolower(dbTableNameExport),sep="")
@@ -174,9 +172,9 @@ exportClassificationResults<-function(conn = conn, schema , dbTableNameExport, i
   #but also ingest the digest to a single table for the global view
 
 
-  sqlDelete = sprintf("delete from %s.%s where varitype = '%s'",schema, cumulativeTable, variType)
+  sqlDelete = sprintf("delete from %s.%s s using %s.%s t where  (s.sourceid,s.varitype) = (t.sourceid,t.varitype)",schema, cumulativeTable, schema, fullTableName)
   DBI::dbExecute(conn,sqlDelete)
-  sqlInsert = sprintf("insert into %s.%s select distinct on (sourceid) sourceid,'%s',%s from %s.%s", schema, cumulativeTable, variType, scoreName, schema , fullTableName)
+  sqlInsert = sprintf("insert into %s.%s select distinct on (sourceid) sourceid,varitype,%s from %s.%s", schema, cumulativeTable, variType, scoreName, schema , fullTableName)
   return(dbExecute(conn,sqlInsert))
 }
 

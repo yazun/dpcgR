@@ -174,7 +174,7 @@ exportClassificationResults<-function(conn = conn, schema , dbTableNameExport, i
 
   sqlDelete = sprintf("delete from %s.%s s using %s.%s t where  (s.sourceid,s.varitype) = (t.sourceid,t.varitype)",schema, cumulativeTable, schema, fullTableName)
   DBI::dbExecute(conn,sqlDelete)
-  sqlInsert = sprintf("insert into %s.%s select distinct on (sourceid) sourceid,varitype,%s from %s.%s", schema, cumulativeTable, variType, scoreName, schema , fullTableName)
+  sqlInsert = sprintf("insert into %s.%s select distinct on (sourceid) sourceid,varitype,%s from %s.%s", schema, cumulativeTable, scoreName, schema , fullTableName)
   return(dbExecute(conn,sqlInsert))
 }
 

@@ -124,12 +124,13 @@ togalactic <- function (ra, dec) {
 #' @return TRUE if ok.
 #' @export
 #' @importFrom RPostgres dbWriteTable Id
+#' @importFrom DBI dbExecute
 #'
 #' @examples \dontrun{
 #' exportResults(dbTableNameExport, sosSet)
 #' }
 exportResults<-function(conn = conn, schema , dbTableNameExport, inData, variType, cumulativeTable = "dr3_common_export", prefix = "dr3_validated_" ) {
-  library(DBI)
+
   # export data to a single table with full selection
   fullTableName = paste(prefix,tolower(dbTableNameExport),sep="")
   tableId = Id(schema = schema, table = fullTableName)
@@ -138,10 +139,44 @@ exportResults<-function(conn = conn, schema , dbTableNameExport, inData, variTyp
 
   sqlDelete = sprintf("delete from %s.%s where varitype = '%s'",schema, cumulativeTable, variType)
   DBI::dbExecute(conn,sqlDelete)
-  sqlInsert = sprintf("insert into %s.%s select  sourceid,'%s' from %s.%s",schema, cumulativeTable, variType, schema , fullTableName)
+  sqlInsert = sprintf("insert into %s.%s select distinct on (sourceid) sourceid,'%s' from %s.%s", schema, cumulativeTable, variType, schema , fullTableName)
   return(dbExecute(conn,sqlInsert))
 }
 
+
+
+#' Export results to prefix||variType table and to cumulativeTable classification table and other means with a given name
+#'
+#' @param conn DB connection
+#' @param schema DB schema to create table in
+#' @param dbTableNameExport name of the table
+#' @param inData dataframe with results.
+#' @param variType name of the type
+#' @param scoreName name of the score field in the data frame provided
+#' @param cumulativeTable name of the cumulative table, where we append sourceid and variType.
+#' @param prefix prefix of the name of the snapshot table
+#'
+#' @return TRUE if ok.
+#' @export
+#' @importFrom RPostgres dbWriteTable Id
+#' @importFrom DBI dbExecute
+#'
+#' @examples \dontrun{
+#' exportResults(dbTableNameExport, sosSet)
+#' }
+exportClassificationResults<-function(conn = conn, schema , dbTableNameExport, inData, variType, scoreName = "score", cumulativeTable = "dr3_classification_export", prefix = "dr3_validated_" ) {
+
+  # export data to a single table with full selection
+  fullTableName = paste(prefix,tolower(dbTableNameExport),sep="")
+  tableId = Id(schema = schema, table = fullTableName)
+  RPostgres::dbWriteTable(conn, tableId, inData, overwrite = T)
+  #but also ingest the digest to a single table for the global view
+
+  sqlDelete = sprintf("delete from %s.%s where varitype = '%s'",schema, cumulativeTable, variType)
+  DBI::dbExecute(conn,sqlDelete)
+  sqlInsert = sprintf("insert into %s.%s select distinct on (sourceid) sourceid,'%s',%s from %s.%s", schema, cumulativeTable, variType, scoreName, schema , fullTableName)
+  return(dbExecute(conn,sqlInsert))
+}
 
 #' Function to convert from a database-recovered string to an array of numbers
 #'

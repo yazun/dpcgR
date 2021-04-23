@@ -270,6 +270,9 @@ plotAitoffGalacticOverlayBigSingleType <-function (bkg, className, xm.skymap, al
   beginColor = 0.0
 
   adjusting = case_when(nrow(skyMapGalactic.xm ) < 50000 ~ 0.1, TRUE ~ adjuster)
+  sizer = case_when(nrow(skyMapGalactic.xm ) < 50000 ~ 1,
+                    nrow(skyMapGalactic.xm ) < 100000 ~ .1,
+                    TRUE ~ .01)
 
   at.x =  outer(1:9, 10^(1:6))[1,]
   maxVal = max(xm.skymap[["cnt"]])
@@ -292,7 +295,7 @@ plotAitoffGalacticOverlayBigSingleType <-function (bkg, className, xm.skymap, al
     # scale_shape_manual(name = "Type", labels =  className, values = 1:length(className)) +
     # #scale_fill_viridis_c(name = "Types", alpha= 0.6, option = "inferno", breaks = waiver(), labels = classSet, begin = beginColor, direction = -1) +
   # scale_colour_viridis_c(name = "Density",  alpha = 0.4, option = palette, trans="log10" , breaks = waiver()) +
-  geom_pointdensity(data= skyMapGalactic.xm, aes(x=aitoffG$x,y=aitoffG$y), shape=16, alpha = .5,
+  geom_pointdensity(data= skyMapGalactic.xm, aes(x=aitoffG$x,y=aitoffG$y), shape=16, alpha = .5, size = sizer,
                     adjust = adjuster,
                     show.legend = TRUE
   ) +
@@ -305,6 +308,7 @@ plotAitoffGalacticOverlayBigSingleType <-function (bkg, className, xm.skymap, al
     shape = guide_legend(order = 1, title.hjust = .5)
     )
 }
+
 
 #' Plots CMD and HR diagrams in a combo
 #'

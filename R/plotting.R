@@ -362,8 +362,8 @@ plotCmdAndHR <- function(inData, valueName, catalogName = NULL, palette = "plasm
   )
 
   adjusting = case_when(nrow(wantedData) < 50000 ~ 0.1, TRUE ~ adjuster)
-  sizer = case_when(nrow(skyMapGalactic.xm ) < 50000 ~ 1,
-                    nrow(skyMapGalactic.xm ) < 100000 ~ .1,
+  sizer = case_when(nrow(wantedData ) < 50000 ~ .5,
+                    nrow(wantedData ) < 100000 ~ .1,
                     TRUE ~ .01)
 
 
@@ -393,7 +393,7 @@ plotCmdAndHR <- function(inData, valueName, catalogName = NULL, palette = "plasm
     ) +
     scale_fill_continuous(low="lightgrey", high="black") +
     # geom_point(data = wantedHR, aes(x = median_bp_minus_median_rp, y =  median_g_abs),shape=16, alpha = .5, colour = pcolour) +
-    geom_pointdensity(data = wantedHR, aes(x = median_bp_minus_median_rp, y =  median_g_abs), shape=16, alpha = .5,
+    geom_pointdensity(data = wantedHR, aes(x = median_bp_minus_median_rp, y =  median_g_abs), shape=16, alpha = .5,size = sizer,
                       adjust = adjusting,
                       show.legend = FALSE) +
     scale_colour_viridis_c(option = palette) +

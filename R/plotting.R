@@ -270,9 +270,9 @@ plotAitoffGalacticOverlayBigSingleType <-function (bkg, className, xm.skymap, al
   beginColor = 0.0
 
   adjusting = case_when(nrow(skyMapGalactic.xm ) < 50000 ~ 0.1, TRUE ~ adjuster)
-  sizer = case_when(nrow(wantedData ) < 10000 ~ 1,
+  sizer = case_when(nrow(wantedData ) < 20000 ~ 1,
                     nrow(skyMapGalactic.xm ) < 50000 ~ .8,
-                    nrow(skyMapGalactic.xm ) < 100000 ~ .1,
+                    nrow(skyMapGalactic.xm ) < 100000 ~ .4,
                     TRUE ~ .01)
 
   at.x =  outer(1:9, 10^(1:6))[1,]
@@ -363,9 +363,9 @@ plotCmdAndHR <- function(inData, valueName, catalogName = NULL, palette = "plasm
   )
 
   adjusting = case_when(nrow(wantedData) < 50000 ~ 0.1, TRUE ~ adjuster)
-  sizer = case_when(nrow(wantedData ) < 10000 ~ 1,
+  sizer = case_when(nrow(wantedData ) < 20000 ~ 1,
                     nrow(wantedData ) < 50000 ~ .8,
-                    nrow(wantedData ) < 100000 ~ .1,
+                    nrow(wantedData ) < 100000 ~ .2,
                     TRUE ~ .01)
 
 

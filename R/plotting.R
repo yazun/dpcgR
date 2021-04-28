@@ -273,7 +273,7 @@ plotAitoffGalacticOverlayBigSingleType <-function (bkg, className, xm.skymap, al
   sizer = case_when(nrow(skyMapGalactic.xm ) < 20000 ~ 1,
                     nrow(skyMapGalactic.xm ) < 50000 ~ .8,
                     nrow(skyMapGalactic.xm ) < 100000 ~ .4,
-                    TRUE ~ .01)
+                    TRUE ~ .1)
 
   at.x =  outer(1:9, 10^(1:6))[1,]
   maxVal = max(xm.skymap[["cnt"]])
@@ -366,7 +366,7 @@ plotCmdAndHR <- function(inData, valueName, catalogName = NULL, palette = "plasm
   sizer = case_when(nrow(wantedData ) < 20000 ~ 1,
                     nrow(wantedData ) < 50000 ~ .8,
                     nrow(wantedData ) < 100000 ~ .2,
-                    TRUE ~ .01)
+                    TRUE ~ .1)
 
 
   pCM = ggplot() +

@@ -137,7 +137,7 @@ exportResults<-function(conn = conn, schema , dbTableNameExport, inData, variTyp
   RPostgres::dbWriteTable(conn, tableId, inData, overwrite = T)
   #but also ingest the digest to a single table for the global view
 
-  sqlGrant = sprintf("grant all on %s.%s to cu7gva",schema, cumulativeTable)
+  sqlGrant = sprintf("grant all on %s.%s to cu7gva",schema, fullTableName)
   DBI::dbExecute(conn,sqlGrant)
   sqlDelete = sprintf("delete from %s.%s where varitype = '%s'",schema, cumulativeTable, variType)
   DBI::dbExecute(conn,sqlDelete)

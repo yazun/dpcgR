@@ -134,13 +134,16 @@ exportResults<-function(conn = conn, schema , dbTableNameExport, inData, variTyp
   # export data to a single table with full selection
   fullTableName = paste(prefix,tolower(dbTableNameExport),sep="")
   tableId = Id(schema = schema, table = fullTableName)
+  message(sprintf("Overwriting table %s.%s",schema,  fullTableName))
   RPostgres::dbWriteTable(conn, tableId, inData, overwrite = T)
   #but also ingest the digest to a single table for the global view
 
   sqlGrant = sprintf("grant all on %s.%s to cu7gva",schema, fullTableName)
   DBI::dbExecute(conn,sqlGrant)
+  message(sprintf("Cleaning old selection of %s from table  table %s.%s",varitype, schema,  cumulativeTable))
   sqlDelete = sprintf("delete from %s.%s where varitype = '%s'",schema, cumulativeTable, variType)
   DBI::dbExecute(conn,sqlDelete)
+  message(sprintf("Inserting selection of %s to table table %s.%s",varitype, schema,  cumulativeTable))
   sqlInsert = sprintf("insert into %s.%s select distinct on (sourceid) sourceid,'%s' from %s.%s", schema, cumulativeTable, variType, schema , fullTableName)
   return(dbExecute(conn,sqlInsert))
 }

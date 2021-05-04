@@ -250,21 +250,22 @@ plotAitoffGalacticOverlayBig <-function (bkg, classGroup, xm.skymap, hpxLevel = 
 #'    , sosType
 #'    , sosConfigName)
 #' }
-plotAitoffGalacticOverlayBigSingleType <-function (bkg, className, xm.skymap, alpha = "ra_deg", delta = "dec_deg", hpxLevel = 8, palette = "plasma", adjuster = 6 )
-{
 
+plotAitoffGalacticOverlayBigSingleType<-function (bkg, className, xm.skymap, alpha = "ra_deg", delta = "dec_deg", hpxLevel = 8, palette = "plasma", adjuster = 6 )
+{
+  require(ggnewscale)
+  require(scattermore)
   skyMapFixed.xm = xm.skymap %>%
     # filter(primaryvartype %in% classSet) %>%
     mutate(alpha = ifelse(!!as.name(alpha)>= 0, !!as.name(alpha), 360 + !!as.name(alpha)))
 
   if(count(skyMapFixed.xm)==0) return(bkg + ggtitle(paste(className,collapse=" "), subtitle = "No objects."));
 
-  skyMapGalactic.xm = data.frame(skyMapFixed.xm, togalactic(skyMapFixed.xm[[alpha]], skyMapFixed.xm[[delta]])) %>%
-    mutate(aitoffG = aitoffFn(gl,gb))
-
   labelClass = paste(className,collapse=" ")
   hpxDeg = dfHPX[dfHPX$Level==hpxLevel,"sq_deg"]
 
+  skyMapGalactic.xm = data.frame(skyMapFixed.xm, togalactic(skyMapFixed.xm[[alpha]], skyMapFixed.xm[[delta]])) %>%
+    mutate(aitoffG = aitoffFn(gl,gb), cnt = as.numeric(cnt) * hpxDeg)
   # plot all
   # move to non-yellow bands immediately if non-zero, but then the legend is broken
   beginColor = 0.0
@@ -275,39 +276,47 @@ plotAitoffGalacticOverlayBigSingleType <-function (bkg, className, xm.skymap, al
                     nrow(skyMapGalactic.xm ) < 100000 ~ .4,
                     TRUE ~ .1)
 
+  transer = case_when(max(skyMapGalactic.xm$cnt ) < 1000 ~ list(fnName = "identity",fn = identity),
+                      TRUE ~ list(fnName = "log10",fn = function(x) ifelse(log10(x) %% 1 == 0, x, NA)))
+
   at.x =  outer(1:9, 10^(1:6))[1,]
   maxVal = max(xm.skymap[["cnt"]])
-  lab.x <- c(ifelse(log10(at.x) %% 1 == 0, at.x, NA), maxVal)
+  lab.x <- c(transer[[2]](at.x) , maxVal)
+
   # my_breaks = ifelse(maxVal>=10^4, lab.x, waiver())
   my_breaks = lab.x
 
   bkg +
     ggtitle(labelClass, subtitle = paste("[",length(skyMapGalactic.xm$sourceid),"] objects."))  +
     new_scale_colour() +
-    # geom_scattermore(
-    #   data = skyMapGalactic.xm, aes(x=aitoffGl,y=aitoffGb
-    #                                 ,colour = cnt
-    #                                 ,shape = factor(className)
-    #                                 # ,fill = factor(skyMapGalactic.xm$primaryvartype)
-    #   )
-    #   , size = 1.6, name = "Types", alpha = .4
-    #   , pixels = c(1920,1080), pointsize = 1.6, interpolate = FALSE) +
-    # # scale_colour_viridis_c(name = "Types", alpha= 0.6, option = "inferno", breaks = waiver(), labels = classSet, begin = beginColor, direction = -1) +
-    # scale_shape_manual(name = "Type", labels =  className, values = 1:length(className)) +
-    # #scale_fill_viridis_c(name = "Types", alpha= 0.6, option = "inferno", breaks = waiver(), labels = classSet, begin = beginColor, direction = -1) +
-  # scale_colour_viridis_c(name = "Density",  alpha = 0.4, option = palette, trans="log10" , breaks = waiver()) +
-  geom_pointdensity(data= skyMapGalactic.xm, aes(x=aitoffG$x,y=aitoffG$y), shape=16, alpha = .5, size = sizer,
-                    adjust = adjuster,
-                    show.legend = TRUE
-  ) +
+    geom_scattermore(
+      data = skyMapGalactic.xm, aes(x=aitoffG$x,y=aitoffG$y
+                                    ,colour = cnt
+                                    ,shape = factor(className)
+                                    # ,fill = factor(skyMapGalactic.xm$primaryvartype)
+
+      )
+      , size = 1.6
+      , name = "Types", alpha = .4
+      , pixels = c(1920,1080), pointsize = 1.6, interpolate = FALSE) +
+    # scale_colour_viridis_c(name = "Types", alpha= 0.6, option = "inferno", breaks = waiver(), labels = classSet, begin = beginColor, direction = -1) +
+    scale_shape_manual(name = "Type", labels =  className, values = 1:length(className)) +
+    #scale_fill_viridis_c(name = "Types", alpha= 0.6, option = "inferno", breaks = waiver(), labels = classSet, begin = beginColor, direction = -1) +
+    scale_colour_viridis_c(name = "identity",  alpha = 0.5, option = palette, trans=transer[[1]] , breaks = waiver()) +
+
+    # geom_pointdensity(data= skyMapGalactic.xm, aes(x=aitoffG$x,y=aitoffG$y), shape=16, alpha = .5, size = sizer,
+    #                   adjust = adjuster,
+    #                   show.legend = TRUE
+    # ) +
     scale_colour_viridis_c(option = palette) +
     guides(colour = guide_colourbar(
-      title = bquote(.("Sources") ~ " per " ~ (.(hpxDeg) ~ Deg^2)  ), barwidth = 1, barheight = 20, title.position = "bottom", order = 2, title.hjust = 0
-      ,title.theme = element_text(size = 15,angle = 0)
+      title = bquote(.("Sources") ~ "per"~deg^2), barwidth = 1, barheight = 20, title.position = "bottom", order = 2, title.hjust = 0
+      ,title.theme = element_text(size = 15, angle = 0)
       ,breaks = my_breaks, values = my_breaks
     ),
     shape = guide_legend(order = 1, title.hjust = .5)
     )
+
 }
 
 
@@ -480,6 +489,6 @@ create1DHistogramRaw <- function(histData, histMetaData, plotType = "area", xaxi
     ) %>%
     hc_tooltip(pointFormat = "For bin {point.x} there is <b>{point.y}</b> items<br/>", footerFormat = paste("All sources: <b> ", entryRow$count , "</b><p>Failed sources: ",entryRow$failed))  %>%
     hc_add_series(histData, hcaes( y = val, name = !!seriesName  ), name = seriesName,  id = "series", type = plotType, yAxis = 0)  %>%
-    hc_add_series(histData, hcaes(name = paste("Cumulative",!!seriesName) , y =  cumsum(val)) , name =  paste("Cumulative",seriesName), id = "Cumulative",  type = "scatter", yAxis = 1)
+    hc_add_series(histData, hcaes(name = paste("Cumulative",!!seriesName) , y =  cumsum(val)) , name =  paste("Cumulative",seriesName), id = "Cumulative",  type = "scatter" , yAxis = 1)
   hc
 }

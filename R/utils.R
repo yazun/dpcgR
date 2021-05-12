@@ -149,6 +149,7 @@ exportResults<-function(conn = conn, schema , dbTableNameExport, inData, variTyp
 
 
 #' Export results to prefix||variType table and to cumulativeTable classification table and other means with a given name.
+#' Contrary to SOS version, It completely replaces cumulativeTable with the selection given in the data frame.
 #'
 #' @param conn DB connection
 #' @param schema DB schema to create table in
@@ -175,7 +176,8 @@ exportClassificationResults<-function(conn = conn, schema , dbTableNameExport, i
   #but also ingest the digest to a single table for the global view
 
 
-  sqlDelete = sprintf("delete from %s.%s s using %s.%s t where  (s.sourceid,s.varitype) = (t.sourceid,t.varitype)",schema, cumulativeTable, schema, fullTableName)
+  # sqlDelete = sprintf("delete from %s.%s s using %s.%s t where  (s.sourceid,s.varitype) = (t.sourceid,t.varitype)",schema, cumulativeTable, schema, fullTableName)
+  sqlDelete = sprintf("truncate table %s.%s ",schema, cumulativeTable)
   DBI::dbExecute(conn,sqlDelete)
   sqlInsert = sprintf("insert into %s.%s select distinct on (sourceid) sourceid,varitype,%s from %s.%s", schema, cumulativeTable, scoreName, schema , fullTableName)
   return(dbExecute(conn,sqlInsert))

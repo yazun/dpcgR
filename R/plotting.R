@@ -157,6 +157,7 @@ plotAitoffGalacticOverlay <-function (bkg, classGroup, xm.skymap )
 #' @export
 #' @importFrom dplyr filter
 #' @importFrom ggplot2 guides
+#' @importFrom scattermore geom_scattermore
 #'
 #' @examples \dontrun{
 #' # brew chunks on the xm.groups for a massive markdown generation
@@ -253,8 +254,6 @@ plotAitoffGalacticOverlayBig <-function (bkg, classGroup, xm.skymap, hpxLevel = 
 
 plotAitoffGalacticOverlayBigSingleType<-function (bkg, className, xm.skymap, alpha = "ra_deg", delta = "dec_deg", hpxLevel = 8, palette = "plasma", adjuster = 6 )
 {
-  require(ggnewscale)
-  require(scattermore)
   skyMapFixed.xm = xm.skymap %>%
     # filter(primaryvartype %in% classSet) %>%
     mutate(alpha = ifelse(!!as.name(alpha)>= 0, !!as.name(alpha), 360 + !!as.name(alpha)))

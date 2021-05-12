@@ -2,7 +2,8 @@
 % Please edit documentation in R/utils.R
 \name{exportClassificationResults}
 \alias{exportClassificationResults}
-\title{Export results to prefix||variType table and to cumulativeTable classification table and other means with a given name.}
+\title{Export results to prefix||variType table and to cumulativeTable classification table and other means with a given name.
+Contrary to SOS version, It completely replaces cumulativeTable with the selection given in the data frame.}
 \usage{
 exportClassificationResults(
   conn = conn,
@@ -34,6 +35,7 @@ TRUE if ok.
 }
 \description{
 Export results to prefix||variType table and to cumulativeTable classification table and other means with a given name.
+Contrary to SOS version, It completely replaces cumulativeTable with the selection given in the data frame.
 }
 \examples{
 \dontrun{

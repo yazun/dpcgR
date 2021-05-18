@@ -254,7 +254,7 @@ plotAitoffGalacticOverlayBig <-function (bkg, classGroup, xm.skymap, hpxLevel = 
 
 plotAitoffGalacticOverlayBigSingleType<-function (bkg, className, xm.skymap, alpha = "ra_deg", delta = "dec_deg", hpxLevel = 8, palette = "plasma", adjuster = 6 )
 {
-  skyMapFixed.xm = xm.skymap %>%
+    skyMapFixed.xm = xm.skymap %>%
     # filter(primaryvartype %in% classSet) %>%
     mutate(alpha = ifelse(!!as.name(alpha)>= 0, !!as.name(alpha), 360 + !!as.name(alpha)))
 
@@ -371,10 +371,10 @@ plotCmdAndHR <- function(inData, valueName, catalogName = NULL, palette = "plasm
   )
 
   adjusting = case_when(nrow(wantedData) < 50000 ~ 0.1, TRUE ~ adjuster)
-  sizer = case_when(nrow(wantedData ) < 20000 ~ 1,
-                    nrow(wantedData ) < 50000 ~ .8,
-                    nrow(wantedData ) < 100000 ~ .2,
-                    TRUE ~ .1)
+  sizer = case_when(nrow(wantedData ) < 20000 ~ 1.5,
+                    nrow(wantedData ) < 50000 ~ 1,
+                    nrow(wantedData ) < 100000 ~ .75,
+                    TRUE ~ .5)
 
 
   pCM = ggplot() +

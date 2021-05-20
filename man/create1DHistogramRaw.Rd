@@ -2,7 +2,7 @@
 % Please edit documentation in R/plotting.R
 \name{create1DHistogramRaw}
 \alias{create1DHistogramRaw}
-\title{Cfreate area hisgoram with cumulatvie sum}
+\title{Create area hisgoram with cumulatvie sum}
 \usage{
 create1DHistogramRaw(histData, histMetaData, plotType = "area", xaxisType = "")
 }
@@ -19,7 +19,7 @@ create1DHistogramRaw(histData, histMetaData, plotType = "area", xaxisType = "")
 highcharter area histogram
 }
 \description{
-Cfreate area hisgoram with cumulatvie sum
+Create area hisgoram with cumulatvie sum
 }
 \examples{
 \dontrun{

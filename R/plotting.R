@@ -423,7 +423,7 @@ plotCmdAndHR <- function(inData, valueName, catalogName = NULL, palette = "plasm
 
 
 
-#' Cfreate area hisgoram with cumulatvie sum
+#' Create area hisgoram with cumulatvie sum
 #'
 #' @param histData dataframe with x,val
 #' @param histMetaData dataframe with all needed fields: aribute, xlabel , scale = "LINEAR"/"LOG", failed, count for sidplauy purposes
@@ -490,4 +490,60 @@ create1DHistogramRaw <- function(histData, histMetaData, plotType = "area", xaxi
     hc_add_series(histData, hcaes( y = val, name = !!seriesName  ), name = seriesName,  id = "series", type = plotType, yAxis = 0)  %>%
     hc_add_series(histData, hcaes(name = paste("Cumulative",!!seriesName) , y =  cumsum(val)) , name =  paste("Cumulative",seriesName), id = "Cumulative",  type = "scatter" , yAxis = 1)
   hc
+}
+
+#' Create faceted plot based on a timeseries data and period, if exists.
+#' @param ts.all timeseries data to plot
+#' @param sosSet dataframe with period
+#'
+#' @return faceted plot with timeseries and folded timeseries if period exists
+#' @export
+#'
+#' @examples \dontrun{
+#' plotTs(ts.all, sosSet)
+#' }
+plotTs<-function (ts.all, sosSet) {
+
+  theme <- theme_bw() + theme(plot.title = element_text(hjust = 0.5, size=14),
+                              plot.subtitle = element_text(hjust = 0.5, size = 13),
+                              plot.tag = element_text(hjust = 0.5),
+                              axis.text.x = element_text(size = 10),axis.text.y = element_text(size = 10),
+                              axis.title.x = element_text(size = 10),axis.title.y = element_text(size = 10)
+                              ,legend.position="bottom", legend.direction="vertical"
+  )
+
+  derived = ggplot() +
+    ggtitle(paste("Timeseries ", ""), subtitle = "")  +
+    geom_pointrange(data = ts.all, mapping = aes(x = obstime,y= val, ymin=val-valerr, ymax=val+valerr, color = tag), size = .05) +
+    labs(x = "JD", y = "Magnitude")  +
+    theme +
+    scale_y_reverse() + facet_wrap(~sourceid, ncol = 1, scales="free_y") +
+    scale_color_manual(values=c("blue", "darkgrey", "red"))
+
+    # get period
+  if ("period" %in% colnames(sosSet)){
+    f = ts.all %>% mutate (sourceid = as.integer64(sourceid)) %>% inner_join(sosSet, by ="sourceid")
+
+    #wrapper for dplyr
+    get_folds <- function(fd) {
+      d = foldTimeseriesFull (fd$sourceid, fd$tag, fd$period, fd$obstime, fd$val, fd$valerr,mean(fd$obstime))
+      return(d);
+    }
+
+    g = f %>% filter (!is.na(period)) %>% group_by(sourceid, tag) %>%
+      do(get_folds(.))
+
+    folded = ggplot() +
+      ggtitle(paste("Folded timeseries ", ""), subtitle = "")  +
+      geom_pointrange(data = g , mapping = aes(x = phases,y= magnitudes, ymin=magnitudes-errors, ymax=magnitudes+errors, color = tag), size = .05) +
+      labs(x = "JD", y = "Magnitude")  +
+      theme +
+      scale_y_reverse() +
+      facet_wrap( ~ sourceid, ncol = 1, scales="free_y") +
+      scale_color_manual(values=c("blue", "darkgrey", "red")) +
+      geom_text(data  = sosSetSample[c("sourceid","period")] %>% mutate(sourceid = as.character(sourceid)), mapping = aes(x = Inf, y = Inf, label=paste("Period:",round(period,4))), size=3, hjust = 1.1, vjust= -2, parse=FALSE)
+
+    return (grid.arrange(derived, folded, nrow = 1 ))
+  }
+  return (grid.arrange(derived, nrow = 1 ))
 }

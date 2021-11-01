@@ -222,8 +222,6 @@ plotAitoffGalacticOverlayBig <-function (bkg, classGroup, xm.skymap, hpxLevel = 
 }
 
 
-
-
 #' Plot overlay distribution in a skyplot with a single class attribute
 #'
 #' Uses geom_scattermore for plotting.
@@ -254,7 +252,7 @@ plotAitoffGalacticOverlayBig <-function (bkg, classGroup, xm.skymap, hpxLevel = 
 
 plotAitoffGalacticOverlayBigSingleType<-function (bkg, className, xm.skymap, alpha = "ra_deg", delta = "dec_deg", hpxLevel = 8, palette = "plasma", adjuster = 6 )
 {
-    skyMapFixed.xm = xm.skymap %>%
+  skyMapFixed.xm = xm.skymap %>%
     # filter(primaryvartype %in% classSet) %>%
     mutate(alpha = ifelse(!!as.name(alpha)>= 0, !!as.name(alpha), 360 + !!as.name(alpha)))
 
@@ -264,7 +262,7 @@ plotAitoffGalacticOverlayBigSingleType<-function (bkg, className, xm.skymap, alp
   hpxDeg = dfHPX[dfHPX$Level==hpxLevel,"sq_deg"]
 
   skyMapGalactic.xm = data.frame(skyMapFixed.xm, togalactic(skyMapFixed.xm[[alpha]], skyMapFixed.xm[[delta]])) %>%
-    mutate(aitoffG = aitoffFn(gl,gb), cnt = as.numeric(cnt) * hpxDeg)
+    mutate(aitoffG = aitoffFn(gl,gb), cnt = as.numeric(cnt) * hpxDeg, originalCnt = cnt)
   # plot all
   # move to non-yellow bands immediately if non-zero, but then the legend is broken
   beginColor = 0.0
@@ -286,7 +284,7 @@ plotAitoffGalacticOverlayBigSingleType<-function (bkg, className, xm.skymap, alp
   my_breaks = lab.x
 
   bkg +
-    ggtitle(labelClass, subtitle = paste("[",length(skyMapGalactic.xm$sourceid),"] objects."))  +
+    ggtitle(labelClass, subtitle = paste("[",sum(skyMapGalactic.xm$originalCnt),"] objects."))  +
     new_scale_colour() +
     geom_scattermore(
       data = skyMapGalactic.xm, aes(x=aitoffG$x,y=aitoffG$y
@@ -317,7 +315,6 @@ plotAitoffGalacticOverlayBigSingleType<-function (bkg, className, xm.skymap, alp
     )
 
 }
-
 
 #' Plots CMD and HR diagrams in a combo
 #'

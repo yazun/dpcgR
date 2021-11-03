@@ -268,7 +268,8 @@ plotAitoffGalacticOverlayBigSingleType<-function (bkg, className, xm.skymap, alp
   beginColor = 0.0
 
   adjusting = case_when(nrow(skyMapGalactic.xm ) < 50000 ~ 0.1, TRUE ~ adjuster)
-  sizer = case_when(nrow(skyMapGalactic.xm ) < 20000 ~ 1,
+  sizer = case_when(nrow(skyMapGalactic.xm ) < 1000 ~ 3,
+                    nrow(skyMapGalactic.xm ) < 20000 ~ 1,
                     nrow(skyMapGalactic.xm ) < 50000 ~ .8,
                     nrow(skyMapGalactic.xm ) < 100000 ~ .4,
                     TRUE ~ .1)

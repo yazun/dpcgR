@@ -584,8 +584,7 @@ data.bkg.cmd = data.bkg.cmd)
                                                                                                           size = 25), plot.tag = element_text(hjust = 0.5), axis.text.x = element_text(size = 20),
                                        axis.text.y = element_text(size = 25), axis.title.x = element_text(size = 20),
                                        axis.title.y = element_text(size = 25))
-  adjusting = case_when(nrow(wantedData) < 50000 ~ 0.1, TRUE ~
-                          adjuster)
+
   sizer = case_when(nrow(wantedData) < 20000 ~ 1.5, nrow(wantedData) <
                       50000 ~ 1, nrow(wantedData) < 100000 ~ 0.75, TRUE ~ 0.5)
   pCM = ggplot() + ggtitle(paste("Color Magnitude for", title),

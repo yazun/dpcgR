@@ -556,7 +556,6 @@ plotTs<-function (ts.all, sosSet) {
 #' @param valueName name of the plots
 #' @param catalogName unused for now. We could show literature ones here.
 #' @param palette viridis palette name for density-colour of the points
-
 #' @param data.bkg.hr data for Hr diagram
 #' @param data.bkg.cmd data for cmd diagram
 #'

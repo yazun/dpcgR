@@ -612,3 +612,8 @@ data.bkg.cmd = data.bkg.cmd)
     theme + scale_y_reverse()
   grid.arrange(pCM, pAM, nrow = 1)
 }
+<<<<<<< HEAD
+=======
+
+#'
+>>>>>>> a6bb3251b89c3f5055e46fc3fb94bebf87949475

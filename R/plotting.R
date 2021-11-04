@@ -570,43 +570,43 @@ plotTs<-function (ts.all, sosSet) {
 #' plotCmdAndHRSeparateSets(sosSetCmd,sosSetHr, valueName = cu7Name, catalogName = NULL)
 #' }
 #'
-plotCmdAndHRSeparateSets<-function (inDataCmd, inData, valueName, catalogName = NULL, palette = "plasma",
-data.bkg.hr = data.bkg.hr,
-data.bkg.cmd = data.bkg.cmd)
+plotCmdAndHRSeparateSets<-function (inDataCmd, inData, valueName, catalogName = NULL, palette = "plasma",data.bkg.hr = data.bkg.hr,data.bkg.cmd = data.bkg.cmd)
 {
-  wantedData = inData %>% filter(sostype == valueName)
-  wantedDataCmd = inDataCmd %>% filter(sostype == valueName)
+  wantedData = inData
+  wantedDataCmd = inDataCmd
   title = paste(valueName)
 
-  wantedHR = wantedData
-  theme <- theme_bw() + ggplot2::theme(plot.title = element_text(hjust = 0.5,
-                                                                 size = 30), plot.subtitle = element_text(hjust = 0.5,
-                                                                                                          size = 25), plot.tag = element_text(hjust = 0.5), axis.text.x = element_text(size = 20),
+  theme <- theme_bw() + ggplot2::theme(plot.title = element_text(hjust = 0.5,size = 30),
+                                       plot.subtitle = element_text(hjust = 0.5,size = 25),
+                                       plot.tag = element_text(hjust = 0.5), axis.text.x = element_text(size = 20),
                                        axis.text.y = element_text(size = 25), axis.title.x = element_text(size = 20),
                                        axis.title.y = element_text(size = 25))
 
   sizer = case_when(nrow(wantedData) < 20000 ~ 1.5, nrow(wantedData) <
                       50000 ~ 1, nrow(wantedData) < 100000 ~ 0.75, TRUE ~ 0.5)
+
   pCM = ggplot() + ggtitle(paste("Color Magnitude for", title),
-                           subtitle = paste(nrow(wantedDataCmd), "sources")) + geom_tile(data = data.bkg.cmd,
-                                                                                         aes(median_bp_minus_median_rp, fmedian_g, fill = log(cnt)),
-                                                                                         alpha = 1, width = 0.01, height = 0.01, show.legend = FALSE) +
+                           subtitle = paste(nrow(wantedDataCmd), "sources")) +
+    geom_tile(data = data.bkg.cmd, aes(median_bp_minus_median_rp, fmedian_g, fill = log(cnt)),
+     alpha = 1, width = 0.01, height = 0.01, show.legend = FALSE) +
     scale_fill_gradient(low = "lightgrey", high = "black") +
     geom_point(data = wantedDataCmd, aes(x = median_bp_minus_median_rp, y = median_g, colour = log(cnt)), shape = 16, alpha = 0.5, size = sizer, show.legend = FALSE) +
     scale_colour_viridis_c(option = palette) +
     labs(x = "median BP - median RP", y = "Median G") + theme +
     scale_y_reverse()
+
   pAM = ggplot() + ggtitle(paste("Color Absolute Magnitude for",
                                  title), subtitle = paste(nrow(wantedHR), "sources after the parallax cut")) +
     geom_tile(data = data.bkg.hr, aes(x = median_bp_minus_median_rp,
                                       y = median_g_abs, fill = log(cnt)), alpha = 1, width = 0.01,
-              height = 0.01, show.legend = FALSE) + scale_fill_continuous(low = "lightgrey",
-                                                                          high = "black") +
-    geom_point(data = wantedHR,
+              height = 0.01, show.legend = FALSE) +
+    scale_fill_continuous(low = "lightgrey",high = "black") +
+    geom_point(data = wantedData,
                aes(x = median_bp_minus_median_rp, y = median_g_abs, colour = log(cnt) ),
                shape = 16, alpha = 0.5, size = sizer,
                show.legend = FALSE) + scale_colour_viridis_c(option = palette) +
     labs(x = "median BP - median RP", y = "Absolute Median G") +
     theme + scale_y_reverse()
-  grid.arrange(pCM, pAM, nrow = 1)
+
+    return(grid.arrange(pCM, pAM, nrow = 1))
 }

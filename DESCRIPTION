@@ -1,7 +1,7 @@
 Package: dpcgR
 Type: Package
 Title: Gaia DPCG/CU7 R general data access package
-Version: 0.1.22
+Version: 0.1.23
 Date: 2022-10-28
 Authors@R: c(
   person("Krzysztof", "Nienartowicz", role = c("aut", "cre"), email = "krzysztof.nienartowicz@sedn.ai")
@@ -24,7 +24,6 @@ Imports:
     brew,
     future.apply,
     magrittr,
-    astrolibR,
     ggplot2,
     scattermore,
     ggnewscale,

@@ -76,8 +76,8 @@ togalactic <- function (ra, dec) {
   decpol = 27.4
   dlon = 123
 
-  ras = ra
-  decs = dec
+  ras = ra * radeg
+  decs = dec * radeg
 
   tmp = bprecess(ras, decs)
   ras = tmp$ra_1950

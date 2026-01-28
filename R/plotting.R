@@ -610,3 +610,1041 @@ plotCmdAndHRSeparateSets<-function (inDataCmd, inData, valueName, catalogName = 
 
     return(grid.arrange(pCM, pAM, nrow = 1))
 }
+
+
+
+#' Extract Histogram Data Structures from Analysis Results
+#'
+#' Processes combined histogram data from SOS analysis results and organizes it
+#' into two separate data structures: per-classifier histograms and merged histograms.
+#' This function is typically called internally by analysis pipelines to prepare
+#' data for visualization.
+#'
+#' @param results A list containing analysis results with the following components:
+#'   \describe{
+#'     \item{metadata}{A list with \code{sosname} (character) identifying the SOS type}
+#'     \item{histogram_combined}{A data frame with histogram data containing columns:
+#'       \code{label}, \code{cut_type}, \code{classifierid}, \code{bucket}, \code{freq},
+#'       \code{training_freq}, \code{bucket_start}, \code{bucket_end}, \code{bucket_mid}}
+#'   }
+#'
+#' @return A list with two components:
+#'   \describe{
+#'     \item{histograms_per_classifier}{A nested list organized by SOS name, then by
+#'       cut type (\code{with_cuts}, \code{classifier_only}), then by classifier name.
+#'       Each leaf contains a filtered data frame for that specific classifier.}
+#'     \item{histograms_merged}{A nested list organized by SOS name, then by cut type.
+#'       Contains aggregated data across all classifiers with labels concatenated.}
+#'   }
+#'
+#' @details
+#' The function performs the following operations:
+#' \enumerate{
+#'   \item Separates data by cut type (with cuts vs. classifier only)
+#'   \item Extracts unique classifier names from labels (format: "classifier:type")
+#'   \item Creates per-classifier subsets for each cut type
+#'   \item Aggregates "all_conditions" data into merged histograms with combined labels
+#' }
+#'
+#' Labels in the input data follow the format "classifier_name:type_name" (e.g.,
+#' "DSCTF:RRab", "Nss:LPV"). The special label "all_conditions" represents merged
+#' data across all classifier conditions.
+#'
+#' @examples
+#' \dontrun{
+#' # After running SOS analysis
+#' results <- analyze_sos_histograms(sosname = "RR_LYRAE", ...)
+#'
+#' # Extract structured histogram data
+#' hist_data <- extract_histogram_data(results)
+#'
+#' # Access per-classifier data
+#' dsctf_with_cuts <- hist_data$histograms_per_classifier$RR_LYRAE$with_cuts$DSCTF
+#'
+#' # Access merged data
+#' merged_no_cuts <- hist_data$histograms_merged$RR_LYRAE$classifier_only
+#' }
+#'
+#' @seealso \code{\link{plot_histograms_from_results}} for visualizing the extracted data,
+#'   \code{\link{plot_histogram_from_dataframe}} for direct plotting
+#'
+#' @export
+extract_histogram_data <- function(results) {
+
+
+  sosname <- results$metadata$sosname
+  histogram_combined <- results$histogram_combined
+
+  # Separate data by cut type for downstream processing
+  data_with_cuts <- histogram_combined %>%
+    filter(cut_type == "with_cut")
+
+  data_no_cuts <- histogram_combined %>%
+    filter(cut_type == "no_cut")
+
+  # Initialize nested list structures for organized storage
+  histograms_per_classifier <- list()
+  histograms_per_classifier[[sosname]] <- list(
+    with_cuts = list(),
+    classifier_only = list()
+  )
+
+  histograms_merged <- list()
+  histograms_merged[[sosname]] <- list(
+    with_cuts = NULL,
+    classifier_only = NULL
+  )
+
+  # Get unique classifiers (excluding the aggregated "all_conditions" label)
+  classifiers <- unique(histogram_combined$label[histogram_combined$label != "all_conditions"])
+
+
+  # Extract classifier names from labels (format: "classifier:type")
+  # e.g., "DSCTF:RRab" -> "DSCTF"
+  classifier_names <- unique(sapply(strsplit(classifiers, ":"), `[`, 1))
+
+  # Process per-classifier data: iterate through each classifier
+  # and extract its specific histogram data for both cut types
+  for (classifier_name in classifier_names) {
+    # Build regex pattern to match all types for this classifier
+    # e.g., "^DSCTF:" matches "DSCTF:RRab", "DSCTF:RRc", etc.
+    classifier_types <- classifiers[grepl(paste0("^", classifier_name, ":"), classifiers)]
+
+    # Extract with-cuts data for this classifier
+    classifier_data_with_cuts <- data_with_cuts %>%
+      filter(label %in% classifier_types) %>%
+      select(label, classifierid, bucket, freq, training_freq, bucket_start, bucket_end, bucket_mid)
+
+    if (nrow(classifier_data_with_cuts) > 0) {
+      histograms_per_classifier[[sosname]]$with_cuts[[classifier_name]] <- classifier_data_with_cuts
+    }
+
+    # Extract classifier-only (no cuts) data for this classifier
+    classifier_data_no_cuts <- data_no_cuts %>%
+      filter(label %in% classifier_types) %>%
+      select(label, classifierid, bucket, freq, training_freq, bucket_start, bucket_end, bucket_mid)
+
+    if (nrow(classifier_data_no_cuts) > 0) {
+      histograms_per_classifier[[sosname]]$classifier_only[[classifier_name]] <- classifier_data_no_cuts
+    }
+  }
+
+  # Process merged data: extract "all_conditions" aggregated histograms
+  # and relabel with concatenated classifier names for reference
+  merged_with_cuts <- data_with_cuts %>%
+    filter(label == "all_conditions") %>%
+    rename(lbl = label) %>%
+    # Create descriptive label showing all contributing classifiers
+    mutate(lbl = paste(sort(unique(classifiers)), collapse = ",")) %>%
+    select(lbl, classifierid, bucket, freq, training_freq, bucket_start, bucket_end, bucket_mid)
+
+  if (nrow(merged_with_cuts) > 0) {
+    histograms_merged[[sosname]]$with_cuts <- merged_with_cuts
+  }
+
+  merged_no_cuts <- data_no_cuts %>%
+    filter(label == "all_conditions") %>%
+    rename(lbl = label) %>%
+    mutate(lbl = paste(sort(unique(classifiers)), collapse = ",")) %>%
+    select(lbl, classifierid, bucket, freq, training_freq, bucket_start, bucket_end, bucket_mid)
+
+  if (nrow(merged_no_cuts) > 0) {
+    histograms_merged[[sosname]]$classifier_only <- merged_no_cuts
+  }
+
+  return(list(
+    histograms_per_classifier = histograms_per_classifier,
+    histograms_merged = histograms_merged
+  ))
+}
+
+
+#' Plot All Histograms from SOS Analysis Results
+#'
+#' Generates a complete set of interactive histogram plots from SOS analysis results,
+#' including per-classifier plots and merged plots for both cut types (with cuts and
+#' without cuts). This is a high-level wrapper function that automates the full
+#' visualization workflow.
+#'
+#' @param results A list containing analysis results with the following components:
+#'   \describe{
+#'     \item{metadata}{A list containing \code{sosname} (character) and \code{cuts}
+#'       (nested list of cut values by classifier and type)}
+#'     \item{histogram_combined}{A data frame with histogram data}
+#'   }
+#' @param output_dir Character string specifying the directory for saving HTML plots.
+#'   Default is \code{"histogram_plots"}. Set to \code{NULL} to skip saving.
+#' @param show_plots Logical indicating whether to display plots interactively.
+#'   Default is \code{TRUE}. Set to \code{FALSE} for batch processing.
+#' @param show_training Logical indicating whether to include training data
+#'   visualization (green bars and cumulative sum lines). Default is \code{TRUE}.
+#'
+#' @return Invisibly returns a named list of all generated plotly objects.
+#'   Plot names follow the pattern: \code{"{sosname}_{classifier}_{cut_type}"}
+#'   for per-classifier plots, and \code{"{sosname}_merged_{cut_type}"} for
+#'   merged plots.
+#'
+#' @details
+#' For each SOS type in the results, this function generates:
+#' \itemize{
+#'   \item Per-classifier histograms with cuts applied
+#'   \item Per-classifier histograms without cuts (classifier-only)
+#'   \item Merged histogram with cuts (all classifiers combined)
+#'   \item Merged histogram without cuts
+#' }
+#'
+#' Each plot includes:
+#' \itemize{
+#'   \item Bar chart of frequency distribution by posterior probability
+#'   \item Training data overlay (optional, in green)
+#'   \item Inverse cumulative sum line on secondary y-axis
+#'   \item Cut threshold lines (for with-cuts plots)
+#' }
+#'
+#' Progress messages are printed to the console during execution.
+#'
+#' @examples
+#' \dontrun{
+#' # Generate all plots and display interactively
+#' results <- analyze_sos_histograms(sosname = "RR_LYRAE", ...)
+#' all_plots <- plot_histograms_from_results(results)
+#'
+#' # Batch processing: save plots without displaying
+#' plot_histograms_from_results(
+#'   results,
+#'   output_dir = "output/histograms",
+#'   show_plots = FALSE
+#' )
+#'
+#' # Access a specific plot from the returned list
+#' all_plots$RR_LYRAE_DSCTF_with_cut
+#' }
+#'
+#' @seealso \code{\link{plot_histogram_from_dataframe}} for plotting individual histograms,
+#'   \code{\link{extract_histogram_data}} for extracting structured data
+#'
+#' @importFrom plotly plot_ly add_trace layout
+#' @importFrom dplyr filter
+#' @importFrom htmlwidgets saveWidget
+#'
+#' @export
+plot_histograms_from_results <- function(results,
+                                         output_dir = "histogram_plots",
+                                         show_plots = TRUE,
+                                         show_training = TRUE) {
+
+  # Extract metadata from results
+  sosname <- results$metadata$sosname
+  cuts_info <- results$metadata$cuts
+  histogram_combined <- results$histogram_combined
+
+  # Identify unique classifiers from the data labels
+  # Exclude "all_conditions" which represents merged data
+  all_labels <- unique(histogram_combined$label)
+  all_labels <- all_labels[all_labels != "all_conditions"]
+
+  # Extract unique classifier names (portion before ":")
+  classifier_names <- unique(sapply(strsplit(all_labels, ":"), `[`, 1))
+
+  # Container for all generated plots
+  all_plots <- list()
+
+  cat(sprintf("\n=== Plotting histograms for %s ===\n", sosname))
+
+  # Generate per-classifier histograms for each classifier
+  for (classifier_name in classifier_names) {
+    # Plot with cuts applied
+    cat(sprintf("  Plotting %s - with cuts\n", classifier_name))
+
+    p1 <- plot_histogram_from_dataframe(
+      histogram_combined = histogram_combined,
+      sosname = sosname,
+      cuts_info = list(sosname = cuts_info),
+      classifier_name = classifier_name,
+      cut_type = "with_cut",
+      show_training = show_training,
+      output_dir = output_dir
+    )
+
+    if (!is.null(p1)) {
+      plot_name <- sprintf("%s_%s_with_cut", sosname, classifier_name)
+      all_plots[[plot_name]] <- p1
+      if (show_plots) print(p1)
+    }
+
+    # Plot without cuts (classifier-only)
+    cat(sprintf("  Plotting %s - no cuts\n", classifier_name))
+
+    p2 <- plot_histogram_from_dataframe(
+      histogram_combined = histogram_combined,
+      sosname = sosname,
+      cuts_info = list(sosname = cuts_info),
+      classifier_name = classifier_name,
+      cut_type = "no_cut",
+      show_training = show_training,
+      output_dir = output_dir
+    )
+
+    if (!is.null(p2)) {
+      plot_name <- sprintf("%s_%s_no_cut", sosname, classifier_name)
+      all_plots[[plot_name]] <- p2
+      if (show_plots) print(p2)
+    }
+  }
+
+  # Generate merged histograms (all classifiers combined)
+  cat(sprintf("  Plotting merged - with cuts\n"))
+
+  p3 <- plot_histogram_from_dataframe(
+    histogram_combined = histogram_combined,
+    sosname = sosname,
+    cuts_info = list(sosname = cuts_info),
+    classifier_name = NULL,  # NULL indicates merged plot
+    cut_type = "with_cut",
+    show_training = show_training,
+    output_dir = output_dir
+  )
+
+  if (!is.null(p3)) {
+    plot_name <- sprintf("%s_merged_with_cut", sosname)
+    all_plots[[plot_name]] <- p3
+    if (show_plots) print(p3)
+  }
+
+  cat(sprintf("  Plotting merged - no cuts\n"))
+
+  p4 <- plot_histogram_from_dataframe(
+    histogram_combined = histogram_combined,
+    sosname = sosname,
+    cuts_info = list(sosname = cuts_info),
+    classifier_name = NULL,
+    cut_type = "no_cut",
+    show_training = show_training,
+    output_dir = output_dir
+  )
+
+  if (!is.null(p4)) {
+    plot_name <- sprintf("%s_merged_no_cut", sosname)
+    all_plots[[plot_name]] <- p4
+    if (show_plots) print(p4)
+  }
+
+  cat(sprintf("\n=== Completed plotting %d histograms ===\n", length(all_plots)))
+
+  return(invisible(all_plots))
+}
+
+
+#' Create Interactive Histogram Plot from Data Frame
+#'
+#' Generates an interactive plotly histogram visualization from pre-processed
+#' histogram data. Supports both per-classifier and merged views, with optional
+#' training data overlay, inverse cumulative sum curves, and cut threshold lines.
+#'
+#' @param histogram_combined A data frame containing histogram data with columns:
+#'   \describe{
+#'     \item{label}{Character identifying the classifier:type (e.g., "DSCTF:RRab")
+#'       or "all_conditions" for merged data}
+#'     \item{cut_type}{Character: "with_cut" or "no_cut"}
+#'     \item{bucket}{Integer bucket index}
+#'     \item{bucket_start}{Numeric lower bound of probability bucket}
+#'     \item{bucket_end}{Numeric upper bound of probability bucket}
+#'     \item{bucket_mid}{Numeric midpoint of probability bucket (used for x-axis)}
+#'     \item{freq}{Integer frequency count for this bucket}
+#'     \item{training_freq}{Integer frequency count from training sources}
+#'   }
+#' @param sosname Character string identifying the SOS type (e.g., "RR_LYRAE").
+#'   Used for plot titles and file naming.
+#' @param cuts_info Nested list containing cut threshold values. Structure:
+#'   \code{cuts_info[[sosname]][[classifier_name]][[type_label]]} returns the
+#'   numeric cut value for that specific type.
+#' @param classifier_name Character string specifying which classifier to plot.
+#'   Set to \code{NULL} for merged (all classifiers) plot. Default is \code{NULL}.
+#' @param cut_type Character string: \code{"with_cut"} or \code{"no_cut"}.
+#'   Determines which subset of data to visualize. Default is \code{"with_cut"}.
+#' @param show_cumsum Logical indicating whether to display inverse cumulative
+#'   sum lines on secondary y-axis. Default is \code{TRUE}.
+#' @param show_cuts Logical indicating whether to display vertical cut threshold
+#'   lines. Default is \code{TRUE}.
+#' @param show_training Logical indicating whether to display training data
+#'   (green bars and cumulative sum). Default is \code{TRUE}.
+#' @param output_dir Character string specifying directory for saving HTML output.
+#'   Set to \code{NULL} to skip saving. Default is \code{NULL}.
+#'
+#' @return A plotly object containing the interactive histogram, or \code{NULL}
+#'   if no data is available for the specified parameters.
+#'
+#' @details
+#' The function creates a multi-layer plotly visualization:
+#'
+#' \strong{For merged plots} (\code{classifier_name = NULL}):
+#' \itemize{
+#'   \item Data is aggregated across all classifier types
+#'   \item Single bar series in steelblue
+#'   \item Training data shown as green bars with reduced opacity
+#' }
+#'
+#' \strong{For per-classifier plots}:
+#' \itemize{
+#'   \item Separate bar series for each type within the classifier
+#'   \item Colors cycle through a 10-color palette
+#'   \item Legend groups bars and lines by type
+#' }
+#'
+#' \strong{Inverse Cumulative Sum}:
+#' The inverse cumsum represents the number (or proportion) of sources with
+#' probability >= the current bucket's midpoint. This is calculated as:
+#' \code{total - forward_cumsum + current_freq}
+#'
+#' \strong{Automatic Log Scale}:
+#' Log scale is automatically applied to the y-axis when the frequency range
+#' spans more than 5x (i.e., max/min > 5).
+#'
+#' \strong{Hover Information}:
+#' Each bar displays: probability value, frequency, training count,
+#' inverse cumulative sum, and percentage.
+#'
+#' @examples
+#' \dontrun{
+#' # Plot a specific classifier with cuts
+#' fig <- plot_histogram_from_dataframe(
+#'   histogram_combined = results$histogram_combined,
+#'   sosname = "RR_LYRAE",
+#'   cuts_info = list(RR_LYRAE = results$metadata$cuts),
+#'   classifier_name = "DSCTF",
+#'   cut_type = "with_cut"
+#' )
+#' fig
+#'
+#' # Plot merged histogram without training data
+#' fig_merged <- plot_histogram_from_dataframe(
+#'   histogram_combined = results$histogram_combined,
+#'   sosname = "RR_LYRAE",
+#'   cuts_info = list(RR_LYRAE = results$metadata$cuts),
+#'   classifier_name = NULL,
+#'   show_training = FALSE,
+#'   output_dir = "plots"
+#' )
+#' }
+#'
+#' @seealso \code{\link{plot_histograms_from_results}} for batch plotting,
+#'   \code{\link{extract_histogram_data}} for data extraction
+#'
+#' @importFrom plotly plot_ly add_trace layout
+#' @importFrom dplyr filter group_by summarise arrange mutate ungroup
+#' @importFrom htmlwidgets saveWidget
+#'
+#' @export
+plot_histogram_from_dataframe <- function(histogram_combined,
+                                          sosname,
+                                          cuts_info,
+                                          classifier_name = NULL,
+                                          cut_type = "with_cut",
+                                          show_cumsum = TRUE,
+                                          show_cuts = TRUE,
+                                          show_training = TRUE,
+                                          output_dir = NULL) {
+
+  library(plotly)
+  library(dplyr)
+
+  # Determine if this is a merged (all classifiers) or single-classifier plot
+  is_merged <- is.null(classifier_name)
+
+  # Filter data based on plot type (merged vs. per-classifier)
+  if (is_merged) {
+    # Merged plot: use aggregated "all_conditions" data
+    data <- histogram_combined %>%
+      filter(label == "all_conditions", cut_type == !!cut_type)
+    title <- sprintf("%s - Merged Histogram (%s)", sosname,
+                     ifelse(cut_type == "with_cut", "With Cuts", "No Cuts"))
+  } else {
+    # Per-classifier plot: filter by classifier name prefix
+    classifier_pattern <- paste0("^", classifier_name, ":")
+    data <- histogram_combined %>%
+      filter(grepl(classifier_pattern, label), cut_type == !!cut_type)
+    title <- sprintf("%s - %s (%s)", sosname, classifier_name,
+                     ifelse(cut_type == "with_cut", "With Cuts", "No Cuts"))
+  }
+
+  # Early return if no data matches the filter criteria
+  if (nrow(data) == 0) {
+    warning(sprintf("No data available for: %s", title))
+    return(NULL)
+  }
+
+  # Calculate inverse cumulative sum statistics
+  # Inverse cumsum = count of sources with probability >= current bucket
+  if (is_merged) {
+    # For merged: aggregate frequencies across all types within each bucket
+    data <- data %>%
+      group_by(bucket, bucket_start, bucket_end, bucket_mid) %>%
+      summarise(freq = sum(freq), training_freq = sum(training_freq, na.rm = TRUE), .groups = "drop") %>%
+      arrange(bucket) %>%
+      mutate(
+        # Forward cumsum: running total from low to high probability
+        forward_cumsum = cumsum(freq),
+        total_freq = sum(freq),
+        # Inverse cumsum: sources with prob >= this bucket
+        # Formula: total - (cumsum up to previous bucket) = total - forward_cumsum + current
+        inverse_cumsum = total_freq - forward_cumsum + freq,
+        inverse_cumsum_norm = inverse_cumsum / total_freq,
+        # Same calculations for training data
+        training_forward_cumsum = cumsum(training_freq),
+        training_total_freq = sum(training_freq),
+        training_inverse_cumsum = training_total_freq - training_forward_cumsum + training_freq,
+        # Handle division by zero when no training data exists
+        training_inverse_cumsum_norm = ifelse(training_total_freq > 0, training_inverse_cumsum / training_total_freq, 0)
+      )
+  } else {
+    # For per-classifier: calculate cumsum separately for each type
+    data <- data %>%
+      group_by(label) %>%
+      arrange(bucket) %>%
+      mutate(
+        forward_cumsum = cumsum(freq),
+        total_freq = sum(freq),
+        inverse_cumsum = total_freq - forward_cumsum + freq,
+        inverse_cumsum_norm = inverse_cumsum / total_freq,
+        training_forward_cumsum = cumsum(training_freq),
+        training_total_freq = sum(training_freq),
+        training_inverse_cumsum = training_total_freq - training_forward_cumsum + training_freq,
+        training_inverse_cumsum_norm = ifelse(training_total_freq > 0, training_inverse_cumsum / training_total_freq, 0)
+      ) %>%
+      ungroup()
+  }
+
+  # Determine if log scale is appropriate based on frequency range
+  # Use log scale when data spans more than 5x range
+  positive_freqs <- data$freq[data$freq > 0]
+  use_log <- FALSE
+  if (length(positive_freqs) >= 2) {
+    freq_range <- range(positive_freqs)
+    use_log <- (freq_range[2] / freq_range[1]) > 5
+  }
+
+  # Create hover text for interactive tooltips
+  if (is_merged) {
+    data <- data %>%
+      mutate(
+        hover_text = paste0(
+          "Probability: ", round(bucket_mid, 3), "<br>",
+          "Frequency: ", format(freq, big.mark = ","), "<br>",
+          "Training: ", format(training_freq, big.mark = ","), "<br>",
+          "Inv. Cumsum: ", format(inverse_cumsum, big.mark = ","), "<br>",
+          "Inv. Cumsum %: ", round(inverse_cumsum_norm * 100, 2), "%"
+        ),
+        hover_text_training = paste0(
+          "Probability: ", round(bucket_mid, 3), "<br>",
+          "Training Sources: ", format(training_freq, big.mark = ","), "<br>",
+          "Training Inv. Cumsum: ", format(training_inverse_cumsum, big.mark = ",")
+        )
+      )
+  } else {
+    data <- data %>%
+      mutate(
+        # Extract type name by removing classifier prefix (e.g., "DSCTF:RRab" -> "RRab")
+        type_name = sub("^[^:]+:", "", label),
+        hover_text = paste0(
+          "Type: ", type_name, "<br>",
+          "Probability: ", round(bucket_mid, 3), "<br>",
+          "Frequency: ", format(freq, big.mark = ","), "<br>",
+          "Training: ", format(training_freq, big.mark = ","), "<br>",
+          "Inv. Cumsum: ", format(inverse_cumsum, big.mark = ","), "<br>",
+          "Inv. Cumsum %: ", round(inverse_cumsum_norm * 100, 2), "%"
+        ),
+        hover_text_training = paste0(
+          "Type: ", type_name, "<br>",
+          "Probability: ", round(bucket_mid, 3), "<br>",
+          "Training Sources: ", format(training_freq, big.mark = ","), "<br>",
+          "Training Inv. Cumsum: ", format(training_inverse_cumsum, big.mark = ",")
+        )
+      )
+  }
+
+  # Initialize empty plotly figure
+  fig <- plot_ly()
+
+  if (is_merged) {
+    # === MERGED PLOT: Single aggregated bar series ===
+
+    # Main frequency bars (steelblue)
+    fig <- fig %>%
+      add_trace(
+        data = data %>% filter(freq > 0),
+        x = ~bucket_mid,
+        y = ~freq,
+        type = 'bar',
+        name = "All Types",
+        text = ~hover_text,
+        hoverinfo = 'text',
+        marker = list(color = 'steelblue')
+      )
+
+    # Training data bars (green, semi-transparent)
+    if (show_training) {
+      fig <- fig %>%
+        add_trace(
+          data = data %>% filter(training_freq > 0),
+          x = ~bucket_mid,
+          y = ~training_freq,
+          type = 'bar',
+          name = "Training Sources",
+          text = ~hover_text_training,
+          hoverinfo = 'text',
+          marker = list(color = 'green', opacity = 0.7)
+        )
+    }
+
+    # Inverse cumulative sum line on secondary y-axis
+    if (show_cumsum) {
+      fig <- fig %>%
+        add_trace(
+          data = data,
+          x = ~bucket_mid,
+          y = ~inverse_cumsum,
+          type = 'scatter',
+          mode = 'lines',
+          name = "Inv. Cumsum",
+          line = list(width = 2, color = 'red'),
+          yaxis = 'y2'
+        )
+
+      # Training inverse cumsum (dotted green line)
+      if (show_training) {
+        fig <- fig %>%
+          add_trace(
+            data = data %>% filter(training_freq > 0),
+            x = ~bucket_mid,
+            y = ~training_inverse_cumsum,
+            type = 'scatter',
+            mode = 'lines',
+            name = "Training Inv. Cumsum",
+            line = list(width = 2, color = 'darkgreen', dash = 'dot'),
+            yaxis = 'y2'
+          )
+      }
+    }
+  } else {
+    # === PER-CLASSIFIER PLOT: Separate series for each type ===
+
+    unique_labels <- unique(data$label)
+    # Color palette for cycling through types
+    colors <- c('#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd',
+                '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf')
+
+    # Add traces for each type within this classifier
+    for (i in seq_along(unique_labels)) {
+      lbl <- unique_labels[i]
+      data_subset <- data %>% filter(label == lbl)
+
+      # Main frequency bars for this type
+      fig <- fig %>%
+        add_trace(
+          data = data_subset,
+          x = ~bucket_mid,
+          y = ~freq,
+          type = 'bar',
+          name = sub("^[^:]+:", "", lbl),  # Display name without classifier prefix
+          text = ~hover_text,
+          hoverinfo = 'text',
+          legendgroup = lbl,  # Group related traces in legend
+          marker = list(color = colors[((i-1) %% length(colors)) + 1])
+        )
+
+      # Training bars for this type (green, semi-transparent)
+      if (show_training) {
+        fig <- fig %>%
+          add_trace(
+            data = data_subset %>% filter(training_freq > 0),
+            x = ~bucket_mid,
+            y = ~training_freq,
+            type = 'bar',
+            name = paste0(sub("^[^:]+:", "", lbl), " (Training)"),
+            text = ~hover_text_training,
+            hoverinfo = 'text',
+            legendgroup = lbl,
+            marker = list(color = 'green', opacity = 0.5)
+          )
+      }
+
+      # Inverse cumsum line for this type
+      if (show_cumsum) {
+        fig <- fig %>%
+          add_trace(
+            data = data_subset,
+            x = ~bucket_mid,
+            y = ~inverse_cumsum,
+            type = 'scatter',
+            mode = 'lines+markers',
+            name = paste0(sub("^[^:]+:", "", lbl), " (Cumsum)"),
+            line = list(width = 2, color = colors[((i-1) %% length(colors)) + 1]),
+            legendgroup = lbl,
+            yaxis = 'y2'
+          )
+
+        # Training cumsum line for this type (dotted)
+        if (show_training) {
+          fig <- fig %>%
+            add_trace(
+              data = data_subset %>% filter(training_freq > 0),
+              x = ~bucket_mid,
+              y = ~training_inverse_cumsum,
+              type = 'scatter',
+              mode = 'lines',
+              name = paste0(sub("^[^:]+:", "", lbl), " (Training Cumsum)"),
+              line = list(width = 2, color = 'darkgreen', dash = 'dot'),
+              legendgroup = lbl,
+              yaxis = 'y2'
+            )
+        }
+      }
+    }
+  }
+
+  # Add vertical cut threshold lines
+  if (show_cuts && !is.null(cuts_info[[sosname]])) {
+    # Determine y-axis range for cut lines (extend slightly above max)
+    y_max <- max(data$inverse_cumsum, na.rm = TRUE) * 1.1
+
+    if (is_merged) {
+      # For merged plot: show cut lines from ALL classifiers
+      for (clf_name in names(cuts_info[[sosname]])) {
+        clf_cuts <- cuts_info[[sosname]][[clf_name]]
+        for (type_label in names(clf_cuts)) {
+          cut_val <- clf_cuts[[type_label]]
+          type_name <- sub("^[^:]+:", "", type_label)
+
+          fig <- fig %>%
+            add_trace(
+              x = rep(cut_val, 2),
+              y = c(0, y_max),
+              type = 'scatter',
+              mode = 'lines',
+              name = paste0("Cut: ", type_name),
+              line = list(color = 'red', width = 2, dash = 'dash'),
+              yaxis = 'y2',
+              showlegend = TRUE
+            )
+        }
+      }
+    } else if (!is.null(cuts_info[[sosname]][[classifier_name]])) {
+      # For per-classifier plot: show only cuts for this classifier
+      clf_cuts <- cuts_info[[sosname]][[classifier_name]]
+      for (type_label in names(clf_cuts)) {
+        cut_val <- clf_cuts[[type_label]]
+        type_name <- sub("^[^:]+:", "", type_label)
+
+        fig <- fig %>%
+          add_trace(
+            x = rep(cut_val, 2),
+            y = c(0, y_max),
+            type = 'scatter',
+            mode = 'lines',
+            name = paste0("Cut: ", type_name),
+            line = list(color = 'red', width = 2, dash = 'dash'),
+            yaxis = 'y2',
+            showlegend = TRUE
+          )
+      }
+    }
+  }
+
+  # Configure plot layout with dual y-axes
+  fig <- fig %>%
+    layout(
+      title = title,
+      xaxis = list(title = "Posterior Probability"),
+      yaxis = list(
+        title = if (use_log) "Frequency (log)" else "Frequency",
+        type = if (use_log) "log" else "linear"
+      ),
+      # Secondary y-axis for cumulative sum (overlaid on right side)
+      yaxis2 = if (show_cumsum) list(
+        title = "Inverse Cumsum",
+        overlaying = 'y',
+        side = 'right',
+        type = if (use_log) "log" else "linear"
+      ) else NULL,
+      barmode = 'group',  # Group bars side-by-side
+      hovermode = 'closest',
+      legend = list(
+        orientation = 'v',
+        x = 1.15,
+        y = 1
+      )
+    )
+
+  # Save to HTML file if output directory specified
+  if (!is.null(output_dir)) {
+    if (!dir.exists(output_dir)) dir.create(output_dir, recursive = TRUE)
+
+    # Construct filename based on plot type
+    filename <- if (is_merged) {
+      sprintf("%s_merged_%s.html", sosname, cut_type)
+    } else {
+      sprintf("%s_%s_%s.html", sosname, classifier_name, cut_type)
+    }
+
+    htmlwidgets::saveWidget(fig, file.path(output_dir, filename), selfcontained = TRUE)
+  }
+
+  return(fig)
+}
+
+#' @title Attribute Histogram Utilities
+#' @description Functions for generating interactive plotly histograms from
+#'   database column statistics. These utilities visualize value distributions
+#'   across table columns with frequency bars and cumulative count overlays.
+#' @name attribute-histograms
+#' @keywords internal
+NULL
+
+library(plotly)
+library(dplyr)
+
+
+#' Determine if Logarithmic Scale Should Be Used for Frequency Axis
+#'
+#' Evaluates the range of frequency values to determine whether a logarithmic
+#' scale would better visualize the distribution. Log scale is recommended
+#' when the data spans multiple orders of magnitude.
+#'
+#' @param data A data frame containing a \code{freq} column with frequency
+#'   counts. Typically a subset of histogram bucket data for a single
+#'   table-column combination.
+#'
+#' @return Logical value: \code{TRUE} if log scale is recommended,
+#'   \code{FALSE} otherwise.
+#'
+#' @details
+#' The function applies the following logic:
+#' \enumerate{
+#'   \item Returns \code{FALSE} for NULL or empty data frames
+#'   \item Filters to only positive frequencies (log scale requires > 0)
+#'   \item Returns \code{FALSE} if fewer than 2 positive values exist
+#'   \item Calculates the ratio of max to min frequency
+#'   \item Returns \code{TRUE} if ratio exceeds 5x
+#' }
+#'
+#' The 5x threshold is a heuristic that balances readability: distributions
+#' with larger dynamic range benefit from log scale compression, while
+#' narrow ranges are clearer on linear scale.
+#'
+#' @examples
+#' \dontrun{
+#' # Check if log scale needed for a data subset
+#' df_subset <- sosHistAll %>%
+#'   filter(table_name == "gaia_source", column_name == "parallax")
+#'
+#' use_log <- should_use_log_scale(df_subset)
+#' # TRUE if max(freq)/min(freq) > 5
+#' }
+#'
+#' @seealso \code{\link{create_attribute_histogram}} which calls this function
+#'
+#' @export
+should_use_log_scale <- function(data) {
+  # Handle NULL or empty input gracefully
+  if (is.null(data) || nrow(data) == 0) return(FALSE)
+
+  # Filter to positive frequencies only
+  # Log scale is undefined for zero/negative values
+  positive_freqs <- data$freq[data$freq > 0]
+
+  # Need at least 2 values to compute a meaningful range
+  if (length(positive_freqs) < 2) return(FALSE)
+
+  # Calculate frequency range ratio
+  freq_range <- range(positive_freqs, na.rm = TRUE)
+  ratio <- freq_range[2] / freq_range[1]
+
+  # Use log scale if range spans more than 5x
+  # This threshold balances readability vs. compression
+  return(ratio > 5)
+}
+
+
+#' Create Interactive Histogram for a Database Column Attribute
+#'
+#' Generates an interactive plotly histogram visualization for a specific
+#' table-column combination from pre-computed bucket statistics. The plot
+#' includes frequency bars with a cumulative count line overlay on a
+#' secondary y-axis, with automatic scale selection.
+#'
+#' @param data A data frame containing histogram bucket data with columns:
+#'   \describe{
+#'     \item{table_name}{Character identifying the source database table}
+#'     \item{column_name}{Character identifying the column within the table}
+#'     \item{bucket}{Integer or numeric bucket index for ordering}
+#'     \item{bucket_avg}{Numeric midpoint/average value for the bucket (x-axis)}
+#'     \item{freq}{Integer frequency count for sources in this bucket}
+#'     \item{nan_count}{Integer count of NULL/NaN values in the column}
+#'     \item{non_nan_count}{Integer count of non-NULL values in the column}
+#'   }
+#' @param table_col_combo A list or single-row data frame with elements:
+#'   \describe{
+#'     \item{table}{Character string specifying the table name to filter}
+#'     \item{column}{Character string specifying the column name to filter}
+#'   }
+#'
+#' @return A plotly object containing the interactive histogram with:
+#'   \itemize{
+#'     \item Bar chart of frequency distribution (left y-axis)
+#'     \item Cumulative count line (right y-axis)
+#'     \item Title showing column name with table and count metadata
+#'     \item Hover tooltips with bucket value and counts
+#'     \item Automatic linear/log scale selection
+#'   }
+#'
+#' @details
+#' The function performs the following operations:
+#' \enumerate{
+#'   \item Filters input data to the specified table-column combination
+#'   \item Sorts by bucket and calculates cumulative frequency
+#'   \item Extracts NaN/non-NaN counts for the subtitle
+#'   \item Determines appropriate y-axis scale via \code{\link{should_use_log_scale}}
+#'   \item Constructs dual-axis plotly visualization with scale indicator
+#' }
+#'
+#' \strong{Automatic Log Scale:}
+#' When the frequency range spans more than 5x, logarithmic scaling is
+#' applied to both y-axes. The axis titles include "(Log Scale)" or
+#' "(Linear Scale)" to indicate the current mode.
+#'
+#' \strong{Plot Title Format:}
+#' The title displays the column name in bold, with a subtitle showing:
+#' \code{table_name | Non-NaN: X | NaN: Y}
+#'
+#' \strong{Color Scheme:}
+#' Both the frequency bars and cumulative line use the same blue color
+#' (rgba(55, 128, 191)) for visual cohesion, with bars at 70 percent opacity.
+#'
+#' \strong{Hover Information:}
+#' Tooltips display the column name, bucket value (2 decimal places),
+#' and the corresponding frequency or cumulative count.
+#'
+#' @examples
+#' \dontrun{
+#' # Prepare table-column combination
+#' combo <- list(table = "gaia_source", column = "phot_g_mean_mag")
+#'
+#' # Create histogram for this attribute
+#' fig <- create_attribute_histogram(sosHistAll, combo)
+#' fig
+#'
+#' # Or using a data frame row
+#' combos <- data.frame(table = "gaia_source", column = "parallax")
+#' fig <- create_attribute_histogram(sosHistAll, combos[1, ])
+#' }
+#'
+#' @seealso \code{\link{should_use_log_scale}} for scale determination,
+#'   \code{\link{brew_plotly_histogram_chunks}} for batch Rmd generation
+#'
+#' @importFrom plotly plot_ly add_bars add_lines layout
+#' @importFrom dplyr filter arrange mutate
+#'
+#' @export
+create_attribute_histogram <- function(data, table_col_combo) {
+
+  # Filter data for specific table and column combination
+  df_subset <- data %>%
+    filter(table_name == table_col_combo$table,
+           column_name == table_col_combo$column)
+
+  # Calculate cumulative frequency for the overlay line
+  # Sort by bucket to ensure correct cumulative ordering
+  df_subset <- df_subset %>%
+    arrange(bucket) %>%
+    mutate(cumulative_freq = cumsum(as.numeric(freq)))
+
+  # Extract metadata for subtitle display
+  # These should be constant across all buckets for a given column
+  nan_count <- unique(df_subset$nan_count)[1]
+  non_nan_count <- unique(df_subset$non_nan_count)[1]
+
+  # Determine if log scale should be used based on frequency range
+  # Helps visualize distributions with large dynamic range
+  use_log_scale <- should_use_log_scale(df_subset)
+
+  # Create scale indicator text for axis labels
+  # Informs user which scale mode is active
+  scale_text <- if(use_log_scale) " (Log Scale)" else " (Linear Scale)"
+
+  # Initialize empty plotly figure
+  fig <- plot_ly()
+
+  # Add histogram bars for frequency distribution
+  # Semi-transparent fill with solid border for clarity
+  fig <- fig %>%
+    add_bars(
+      data = df_subset,
+      x = ~bucket_avg,
+      y = ~freq,
+      name = 'Frequency',
+      marker = list(color = 'rgba(55, 128, 191, 0.7)',
+                    line = list(color = 'rgba(55, 128, 191, 1.0)',
+                                width = 1)),
+      # Custom hover template shows column name and values
+      hovertemplate = paste(
+        '<b>', table_col_combo$column, ':</b> %{x:.2f}<br>',
+        '<b>Frequency:</b> %{y}<br>',
+        '<extra></extra>'
+      )
+    )
+
+  # Add cumulative frequency line on secondary y-axis
+  # Uses same color as bars for visual cohesion
+  fig <- fig %>%
+    add_lines(
+      data = df_subset,
+      x = ~bucket_avg,
+      y = ~cumulative_freq,
+      name = 'Cumulative',
+      yaxis = 'y2',
+      line = list(color = 'rgba(55, 128, 191, 1.0)', width = 2),
+      hovertemplate = paste(
+        '<b>', table_col_combo$column, ':</b> %{x:.2f}<br>',
+        '<b>Cumulative:</b> %{y}<br>',
+        '<extra></extra>'
+      )
+    )
+
+  # Configure layout with dual y-axes and informative title
+  fig <- fig %>%
+    layout(
+      # Title with column name (bold) and metadata subtitle
+      title = list(
+        text = paste0(
+          '<b>', table_col_combo$column, '</b><br>',
+          '<sup>', table_col_combo$table,
+          ' | Non-NaN: ', format(non_nan_count, big.mark = ','),
+          ' | NaN: ', format(nan_count, big.mark = ','), '</sup>'
+        ),
+        font = list(size = 16)
+      ),
+      # X-axis labeled with column name for context
+      xaxis = list(title = table_col_combo$column),
+      # Primary y-axis (left): frequency bars with scale indicator
+      yaxis = list(
+        title = paste0('Frequency', scale_text),
+        side = 'left',
+        type = if(use_log_scale) 'log' else 'linear'
+      ),
+      # Secondary y-axis (right): cumulative count line
+      # Uses same scale type as primary for visual consistency
+      yaxis2 = list(
+        title = paste0('Cumulative Count', scale_text),
+        overlaying = 'y',
+        side = 'right',
+        type = if(use_log_scale) 'log' else 'linear'
+      ),
+      hovermode = 'x unified',
+      showlegend = TRUE,
+      legend = list(x = 0.8, y = 1),
+      # Extra right margin prevents y2 axis title cutoff
+      margin = list(r = 100)
+    )
+
+  return(fig)
+}

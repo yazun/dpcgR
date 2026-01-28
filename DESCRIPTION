@@ -1,8 +1,8 @@
 Package: dpcgR
 Type: Package
 Title: Gaia DPCG/CU7 R general data access package
-Version: 0.1.23
-Date: 2022-10-28
+Version: 0.1.25
+Date: 2026-01-28
 Authors@R: c(
   person("Krzysztof", "Nienartowicz", role = c("aut", "cre"), email = "krzysztof.nienartowicz@sedn.ai")
   )
@@ -29,5 +29,5 @@ Imports:
     ggnewscale,
     gridExtra,
     ggpointdensity
-RoxygenNote: 7.1.2
+RoxygenNote: 7.3.2
 URL: https://github.com/yazun/dpcgR

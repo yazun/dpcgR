@@ -66,7 +66,6 @@ aitoffFn <- function (l, b) {
 #' @return data frame of (gl,gb)
 #' @export
 #'
-#' @importFrom astrolibR bprecess
 #'
 #' @examples togalactic(pi/4,pi/4)
 togalactic <- function (ra, dec) {

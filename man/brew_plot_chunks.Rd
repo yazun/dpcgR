@@ -4,9 +4,49 @@
 \alias{brew_plot_chunks}
 \title{Create markdown chunks automatically.}
 \usage{
-brew_plot_chunks(listItems, fn, xm.groups, xm.skymapData)
+brew_plot_chunks(
+  plot_list,
+  plot_list_var_name,
+  output_file = NULL,
+  fig_height = 10,
+  fig_width = 14,
+  file_pattern = "brewed_plot_chunks_"
+)
+
+brew_plot_chunks(
+  plot_list,
+  plot_list_var_name,
+  output_file = NULL,
+  fig_height = 10,
+  fig_width = 14,
+  file_pattern = "brewed_plot_chunks_"
+)
 }
 \arguments{
+\item{plot_list}{A named list of plot objects (ggplot2, base R, or any
+printable plot object). Names should follow the convention
+\code{"sosname_classifier_type"} or \code{"sosname_merged_type"} for
+automatic section title generation.}
+
+\item{plot_list_var_name}{Character string specifying the variable name
+that will reference the plot list in the generated chunks. This must
+match the actual variable name in the R environment where the Rmd will
+be knitted.}
+
+\item{output_file}{Character string specifying the output file path.
+If \code{NULL} (default), creates a temporary file in the current
+working directory.}
+
+\item{fig_height}{Numeric specifying the figure height in inches for
+the generated chunks. Default is \code{10}.}
+
+\item{fig_width}{Numeric specifying the figure width in inches for
+the generated chunks. Default is \code{14}.}
+
+\item{file_pattern}{Character string specifying the prefix for temporary
+file names when \code{output_file} is \code{NULL}. Default is
+\code{"brewed_plot_chunks_"}.}
+
 \item{listItems}{list of items to generate chunks on}
 
 \item{fn}{function to generate data for the listItems}
@@ -17,10 +57,44 @@ brew_plot_chunks(listItems, fn, xm.groups, xm.skymapData)
 }
 \value{
 chunks to be included in the markdown via 'child' reference
+
+Character string containing the path to the generated R Markdown
+  file, or \code{NULL} if the plot list is empty.
 }
 \description{
 Check the code in the notebook as it contains escapes confusing for generated HTML.
 Data for chunks is created in parallel and chunks are generated based on the created data, then executed in-place with the `child` argument of the chunk.
+
+Creates an R Markdown file containing code chunks that render each plot from
+a named list. This function automates report generation by converting plot
+collections into properly formatted Rmd sections with headers derived from
+plot names.
+}
+\details{
+The function performs the following operations:
+\enumerate{
+  \item Creates or overwrites the output file
+  \item Parses each plot name to generate readable section headers
+  \item Creates properly formatted R Markdown code chunks with figure dimensions
+  \item Writes all chunks sequentially to the output file
+}
+
+\strong{Plot Name Parsing:}
+Plot names are split by underscore and interpreted as follows:
+\itemize{
+  \item Names containing "merged": \code{"SOSNAME_merged_with_cut"} becomes
+    section header "SOSNAME - Merged (With Cut)"
+  \item Other names: \code{"SOSNAME_CLASSIFIER_with_cut"} becomes
+    "SOSNAME - CLASSIFIER (With Cut)"
+}
+
+\strong{Chunk Naming:}
+Chunk names are sanitized by replacing non-alphanumeric characters with
+underscores and prefixing with "plot_" to ensure valid R Markdown chunk labels.
+
+\strong{Usage in R Markdown:}
+The generated file is designed to be included in a parent R Markdown document
+using \code{child} chunks or concatenated with other Rmd content.
 }
 \examples{
 \dontrun{brewed.chunks = brew_plot_chunks(xm.groups_big[1]
@@ -33,4 +107,30 @@ Data for chunks is created in parallel and chunks are generated based on the cre
 
 ```
 }
+\dontrun{
+# Create a named list of plots
+my_plots <- list(
+  "RR_LYRAE_DSCTF_with_cut" = ggplot(...),
+  "RR_LYRAE_merged_no_cut" = ggplot(...)
+)
+
+# Generate Rmd chunks file
+chunk_file <- brew_plot_chunks(
+  plot_list = my_plots,
+  plot_list_var_name = "my_plots",
+  output_file = "plot_sections.Rmd",
+  fig_height = 8,
+  fig_width = 12
+)
+
+# The generated file can be included in main.Rmd:
+# ```{r child='plot_sections.Rmd'}
+# ```
+}
+
+}
+\seealso{
+\code{\link{brew_histogram_chunks}} for histogram-specific defaults,
+  \code{\link{brew_skymap_chunks}} for skymap-specific defaults,
+  \code{\link{brew_plotly_chunks}} for interactive plotly plots
 }

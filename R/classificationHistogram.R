@@ -1,3 +1,269 @@
+#' Create Reverse Alias Map
+#'
+#' Converts an alias map from full_type -> alias format to alias -> full_type format.
+#' This is useful for mapping short column aliases back to their full classifier:type names.
+#'
+#' @param alias_map A named list or vector where names are full type identifiers
+#'   (e.g., "classifier_name:type_name") and values are short aliases (e.g., "c1", "c2").
+#'
+#' @return A named character vector where names are aliases and values are full type identifiers.
+#'
+#' @examples {
+#'
+#' alias_map <- list(
+#'   "CD_DR4_xgboost:CEP" = "c1",
+#'   "CD_DR4_xgboost:RR" = "c2"
+#' )
+#' reverse_map <- create_reverse_alias_map(alias_map)
+#' # Returns: c(c1 = "CD_DR4_xgboost:CEP", c2 = "CD_DR4_xgboost:RR")
+#' }
+#' @export
+create_reverse_alias_map <- function(alias_map) {
+
+  reverse_map <- setNames(names(alias_map), unlist(alias_map))
+  return(reverse_map)
+}
+
+
+#' Expand Aliases in Pivoted Skymap Data
+#'
+#' Replaces alias labels (e.g., "c1", "c2") in a pivoted skymap dataframe with
+#' their full classifier:type names using the provided alias map.
+#'
+#' @param skymap_pivoted A dataframe containing pivoted skymap data with a \code{label}
+#'   column that may contain alias values.
+#' @param alias_map A named list or vector mapping full type identifiers to aliases,
+#'   as returned by skymap query functions.
+#'
+#' @return A dataframe with the same structure as \code{skymap_pivoted}, but with
+#'   alias values in the \code{label} column replaced by full type identifiers.
+#'
+#' @details
+#' The function uses \code{\link{create_reverse_alias_map}} internally to convert
+#' the alias map to the required format. Labels that do not match any alias
+#' (e.g., "all_conditions") are left unchanged.
+#'
+#' @examples {
+#' \dontrun{
+#' # Assuming results from skymap query
+#' expanded_data <- expand_aliases_in_pivoted(
+#'   results$skymap_pivoted,
+#'   results$skymap$alias_map
+#' )
+#' }
+#' }
+#' @importFrom dplyr mutate
+#' @export
+expand_aliases_in_pivoted <- function(skymap_pivoted, alias_map) {
+  reverse_map <- create_reverse_alias_map(alias_map)
+
+
+  skymap_pivoted <- skymap_pivoted %>%
+    dplyr::mutate(
+      label = ifelse(label %in% names(reverse_map),
+                     reverse_map[label],
+                     label)
+    )
+
+  return(skymap_pivoted)
+}
+
+
+#' Plot Histograms from Skymap Analysis Results
+#'
+#' Generates interactive Plotly histogram plots from skymap analysis results,
+#' showing the distribution of posterior probabilities for astronomical source
+#' classifications. Creates separate plots for each classifier and merged plots
+#' combining all classifiers.
+#'
+#' @param results A list containing skymap analysis results with the following components:
+#'   \describe{
+#'     \item{skymap_pivoted}{Dataframe with columns: label, cut_type, coord, alpha, delta,
+#'       count, avg_prob, min_prob, max_prob, training_count}
+#'     \item{skymap}{List containing alias_map for label expansion}
+#'     \item{metadata}{List containing sosname (SOS name) and cuts (probability thresholds)}
+#'   }
+#' @param output_dir Character string specifying the directory to save HTML plot files.
+#'   If \code{NULL} (default), plots are not saved to files.
+#' @param show_plots Logical indicating whether to display plots interactively.
+#'   Default is \code{TRUE}.
+#' @param show_training Logical indicating whether to include training source counts
+#'   as separate bar series. Default is \code{TRUE}.
+#'
+#' @return Invisibly returns a named list of Plotly figure objects. Names follow the
+#'   pattern \code{{sosname}_{classifier}_{cut_type}} for per-classifier plots and
+#'   \code{{sosname}_merged_{cut_type}} for merged plots.
+#'
+#' @details
+#' The function performs the following steps:
+#' \enumerate{
+#'   \item Expands alias labels to full classifier:type names using the alias map
+#'   \item Identifies unique classifiers from the data
+#'   \item Generates four types of plots for each classifier:
+#'     \itemize{
+#'       \item Per-classifier with probability cuts applied
+#'       \item Per-classifier without cuts
+#'       \item Merged (all classifiers) with cuts
+#'       \item Merged without cuts
+#'     }
+#' }
+#'
+#' Each plot includes:
+#' \itemize{
+#'   \item Bar chart of source counts per probability bin
+#'   \item Optional training source counts (green bars)
+#'   \item Inverse cumulative sum line (secondary y-axis)
+#'   \item Vertical lines indicating probability cut thresholds
+#' }
+#'
+#' @seealso
+#' \code{\link{plot_histogram_from_skymap_pivoted}} for the underlying plotting function,
+#' \code{\link{expand_aliases_in_pivoted}} for alias expansion
+#'
+#' @examples{
+#' \dontrun{
+#' # After running skymap analysis
+#' results <- run_skymap_analysis(params, runid, sosname_conf)
+#'
+#' # Generate all plots with training comparison
+#' all_plots <- plot_histograms_from_skymap_results(
+#'   results,
+#'   output_dir = "histogram_plots",
+#'   show_plots = TRUE,
+#'   show_training = TRUE
+#' )
+#'
+#' # Access individual plots
+#' all_plots$cepheidandrrlyrae_CD_DR4_xgboost_with_cut
+#' }
+#' }
+#'
+#' @importFrom dplyr filter mutate
+#' @export
+plot_histograms_from_skymap_results <- function(results,
+                                                output_dir = NULL,
+                                                show_plots = TRUE,
+                                                show_training = TRUE) {
+
+  # Validate input
+
+  if (is.null(results$skymap_pivoted)) {
+    stop("results$skymap_pivoted is required")
+  }
+
+  sosname <- results$metadata$sosname
+  cuts_info <- results$metadata$cuts
+
+  # Expand aliases to full names using alias_map
+  skymap_data <- results$skymap_pivoted
+  if (!is.null(results$skymap$alias_map)) {
+    skymap_data <- expand_aliases_in_pivoted(skymap_data, results$skymap$alias_map)
+  }
+
+  # Get unique labels (excluding "all_conditions")
+  all_labels <- unique(skymap_data$label)
+  all_labels <- all_labels[all_labels != "all_conditions"]
+
+  # Check if labels contain ":" separator
+  has_separator <- any(grepl(":", all_labels))
+
+  if (!has_separator) {
+    warning("Labels do not contain ':' separator. Using labels as-is.")
+    classifier_names <- all_labels
+  } else {
+    # Extract unique classifier names (part before ":")
+    classifier_names <- unique(sapply(strsplit(all_labels, ":"), `[`, 1))
+  }
+
+  # Store all plots
+  all_plots <- list()
+
+  cat(sprintf("\n=== Plotting histograms for %s ===\n", sosname))
+  cat(sprintf("  Found %d classifiers: %s\n", length(classifier_names),
+              paste(classifier_names, collapse = ", ")))
+
+  # Plot per-classifier histograms
+  for (classifier_name in classifier_names) {
+    cat(sprintf("  Plotting %s - with cuts\n", classifier_name))
+
+    p1 <- plot_histogram_from_skymap_pivoted(
+      skymap_data = skymap_data,
+      sosname = sosname,
+      cuts_info = cuts_info,
+      classifier_name = classifier_name,
+      cut_type = "with_cut",
+      show_training = show_training,
+      output_dir = output_dir
+    )
+
+    if (!is.null(p1)) {
+      plot_name <- sprintf("%s_%s_with_cut", sosname, classifier_name)
+      all_plots[[plot_name]] <- p1
+      if (show_plots) print(p1)
+    }
+
+    cat(sprintf("  Plotting %s - no cuts\n", classifier_name))
+
+    p2 <- plot_histogram_from_skymap_pivoted(
+      skymap_data = skymap_data,
+      sosname = sosname,
+      cuts_info = cuts_info,
+      classifier_name = classifier_name,
+      cut_type = "no_cut",
+      show_training = show_training,
+      output_dir = output_dir
+    )
+
+    if (!is.null(p2)) {
+      plot_name <- sprintf("%s_%s_no_cut", sosname, classifier_name)
+      all_plots[[plot_name]] <- p2
+      if (show_plots) print(p2)
+    }
+  }
+
+  # Plot merged histograms (all_conditions)
+  cat("  Plotting merged - with cuts\n")
+
+  p3 <- plot_histogram_from_skymap_pivoted(
+    skymap_data = skymap_data,
+    sosname = sosname,
+    cuts_info = cuts_info,
+    classifier_name = NULL,
+    cut_type = "with_cut",
+    show_training = show_training,
+    output_dir = output_dir
+  )
+
+  if (!is.null(p3)) {
+    plot_name <- sprintf("%s_merged_with_cut", sosname)
+    all_plots[[plot_name]] <- p3
+    if (show_plots) print(p3)
+  }
+
+  cat("  Plotting merged - no cuts\n")
+
+  p4 <- plot_histogram_from_skymap_pivoted(
+    skymap_data = skymap_data,
+    sosname = sosname,
+    cuts_info = cuts_info,
+    classifier_name = NULL,
+    cut_type = "no_cut",
+    show_training = show_training,
+    output_dir = output_dir
+  )
+
+  if (!is.null(p4)) {
+    plot_name <- sprintf("%s_merged_no_cut", sosname)
+    all_plots[[plot_name]] <- p4
+    if (show_plots) print(p4)
+  }
+
+  cat(sprintf("\n=== Completed plotting %d histograms ===\n", length(all_plots)))
+
+  return(invisible(all_plots))
+}
+
+
 #' Plot Histogram from Pivoted Skymap Data
 #'
 #' Creates an interactive Plotly histogram showing the distribution of posterior
@@ -39,7 +305,6 @@
 #'   \item Aggregates source counts per bin
 #'   \item Calculates inverse cumulative sums (sources with probability >= bin threshold)
 #'   \item Automatically applies log scale if frequency range exceeds 5x
-#'   \item Adds subtitle showing accumulated source counts from probability cut per class
 #' }
 #'
 #' The resulting plot includes:
@@ -48,7 +313,6 @@
 #'   \item Secondary y-axis: Inverse cumulative sum line(s)
 #'   \item Vertical dashed lines at probability cut thresholds (if \code{show_cuts = TRUE})
 #'   \item Green bars/lines for training source comparison (if \code{show_training = TRUE})
-#'   \item Subtitle with accumulated entries from cut threshold per class
 #' }
 #'
 #' @section Hover Information:
@@ -222,109 +486,6 @@ plot_histogram_from_skymap_pivoted <- function(skymap_data,
                                               training_inverse_cumsum / training_total_freq, 0)
       ) %>%
       dplyr::ungroup()
-  }
-
-  # ============================================================================
-  # Calculate accumulated entries from probability cut (for subtitle)
-  # ============================================================================
-  subtitle_parts <- c()
-
-  if (!is.null(cuts_info)) {
-    if (is_merged) {
-      # For merged plot: calculate for all classifiers/types
-      for (clf_name in names(cuts_info)) {
-        clf_cuts <- cuts_info[[clf_name]]
-        for (type_label in names(clf_cuts)) {
-          cut_val <- clf_cuts[[type_label]]
-          type_name <- if (grepl(":", type_label)) sub("^[^:]+:", "", type_label) else type_label
-
-          # Find accumulated count from cut threshold
-          # Sum frequencies where bucket_start >= cut_val
-          accum_count <- binned_data %>%
-            dplyr::filter(bucket_start >= cut_val) %>%
-            dplyr::summarise(total = sum(freq, na.rm = TRUE)) %>%
-            dplyr::pull(total)
-
-          # Also get training count from cut
-          accum_training <- binned_data %>%
-            dplyr::filter(bucket_start >= cut_val) %>%
-            dplyr::summarise(total = sum(training_freq, na.rm = TRUE)) %>%
-            dplyr::pull(total)
-
-          if (length(accum_count) > 0 && !is.na(accum_count)) {
-            subtitle_parts <- c(subtitle_parts,
-                                sprintf("%s: %s (train: %s) @ p>=%.2f",
-                                        type_name,
-                                        format(accum_count, big.mark = ","),
-                                        format(accum_training, big.mark = ","),
-                                        cut_val))
-          }
-        }
-      }
-    } else if (!is.null(cuts_info[[classifier_name]])) {
-      # For per-classifier plot: calculate for each type in this classifier
-      clf_cuts <- cuts_info[[classifier_name]]
-      unique_labels <- unique(binned_data$label)
-
-      for (type_label in names(clf_cuts)) {
-        cut_val <- clf_cuts[[type_label]]
-        type_name <- if (grepl(":", type_label)) sub("^[^:]+:", "", type_label) else type_label
-
-        # Find the matching label in binned_data
-        matching_label <- unique_labels[grepl(paste0(":", type_name, "$"), unique_labels) |
-                                          unique_labels == type_name]
-
-        if (length(matching_label) > 0) {
-          # Calculate accumulated count from cut threshold for this type
-          accum_count <- binned_data %>%
-            dplyr::filter(label %in% matching_label, bucket_start >= cut_val) %>%
-            dplyr::summarise(total = sum(freq, na.rm = TRUE)) %>%
-            dplyr::pull(total)
-
-          accum_training <- binned_data %>%
-            dplyr::filter(label %in% matching_label, bucket_start >= cut_val) %>%
-            dplyr::summarise(total = sum(training_freq, na.rm = TRUE)) %>%
-            dplyr::pull(total)
-
-          if (length(accum_count) > 0 && !is.na(accum_count)) {
-            subtitle_parts <- c(subtitle_parts,
-                                sprintf("%s: %s (train: %s) @ p>=%.2f",
-                                        type_name,
-                                        format(accum_count, big.mark = ","),
-                                        format(accum_training, big.mark = ","),
-                                        cut_val))
-          }
-        } else {
-          # If no matching label, still show the cut info with the type from cuts_info
-          # Calculate across all labels in this classifier
-          accum_count <- binned_data %>%
-            dplyr::filter(bucket_start >= cut_val) %>%
-            dplyr::summarise(total = sum(freq, na.rm = TRUE)) %>%
-            dplyr::pull(total)
-
-          accum_training <- binned_data %>%
-            dplyr::filter(bucket_start >= cut_val) %>%
-            dplyr::summarise(total = sum(training_freq, na.rm = TRUE)) %>%
-            dplyr::pull(total)
-
-          if (length(accum_count) > 0 && !is.na(accum_count)) {
-            subtitle_parts <- c(subtitle_parts,
-                                sprintf("%s: %s (train: %s) @ p>=%.2f",
-                                        type_name,
-                                        format(accum_count, big.mark = ","),
-                                        format(accum_training, big.mark = ","),
-                                        cut_val))
-          }
-        }
-      }
-    }
-  }
-
-  # Build subtitle string
-  subtitle <- if (length(subtitle_parts) > 0) {
-    paste("Sources from cut:", paste(subtitle_parts, collapse = " | "))
-  } else {
-    NULL
   }
 
   # Determine if log scale needed
@@ -547,28 +708,10 @@ plot_histogram_from_skymap_pivoted <- function(skymap_data,
     }
   }
 
-  # ============================================================================
-  # Layout with title and subtitle
-  # ============================================================================
-  title_config <- if (!is.null(subtitle)) {
-    list(
-      text = paste0(title, "<br><sup>", subtitle, "</sup>"),
-      font = list(size = 14),
-      x = 0.5,
-      xanchor = "center"
-    )
-  } else {
-    list(
-      text = title,
-      font = list(size = 14),
-      x = 0.5,
-      xanchor = "center"
-    )
-  }
-
+  # Layout
   fig <- fig %>%
     plotly::layout(
-      title = title_config,
+      title = title,
       xaxis = list(title = "Posterior Probability"),
       yaxis = list(
         title = if (use_log) "Frequency (log)" else "Frequency",
@@ -586,8 +729,7 @@ plot_histogram_from_skymap_pivoted <- function(skymap_data,
         orientation = 'v',
         x = 1.15,
         y = 1
-      ),
-      margin = list(t = 80)  # Extra top margin for subtitle
+      )
     )
 
   # Save if requested

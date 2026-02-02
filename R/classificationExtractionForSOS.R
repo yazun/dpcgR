@@ -991,39 +991,58 @@ build_skymap_parallel_script <- function(runid, type_conditions_list, schema = "
   )
 }
 
-
 #' Execute Parallel Scripts Sequentially
 #'
 #' Executes a list of parallel script packages, optionally running aggregation
-#' queries after each script completes.
+#' queries after each script completes. Checks for existing tables and skips
+#' execution unless force flag is set.
 #'
 #' @param scripts Named list. Script packages from \code{\link{build_skymap_parallel_script}}
 #'   or similar functions.
 #' @param conn DBI connection or NULL. Database connection for running aggregation
-#'   queries. If NULL, aggregation is skipped.
+#'   queries and checking table existence. If NULL, aggregation is skipped and
+#'   table existence cannot be checked.
 #' @param execute Logical. If TRUE, actually execute the scripts. If FALSE,
 #'   return script information without execution. Default is FALSE.
+#' @param force Logical. If TRUE, execute scripts even if target table already
+#'   exists. If FALSE, skip execution for existing tables and reuse existing data.
+#'   Default is FALSE.
 #' @param debug Logical. If TRUE, print detailed information about each script.
 #'   Default is FALSE.
 #'
 #' @return A named list with results for each script:
 #'   \describe{
 #'     \item{success}{Logical. Whether execution succeeded (only if execute=TRUE)}
+#'     \item{skipped}{Logical. Whether execution was skipped due to existing table}
 #'     \item{exit_code}{Integer. Shell exit code (only if execution failed)}
 #'     \item{table_name}{Character. Target table name}
 #'     \item{alias_map}{Named list. Type to alias mapping}
 #'     \item{alias_legend}{Dataframe. Alias documentation}
 #'     \item{aggregated_data}{Dataframe. Results of aggregation query
-#'       (only if conn provided and execute=TRUE)}
+#'       (only if conn provided and execute=TRUE or table exists)}
 #'   }
 #'
 #' @details
 #' When \code{execute = FALSE}, the function returns all script information
 #' without running anything, useful for inspection and debugging.
 #'
-#' When \code{execute = TRUE}, scripts are run sequentially using \code{system()}.
-#' If a database connection is provided, the aggregation query is executed
-#' after each parallel job completes successfully.
+#' When \code{execute = TRUE}, the function first checks if the target table
+#' already exists in the database:
+#' \itemize{
+#'   \item If table exists and \code{force = FALSE}: Skip script execution,
+#'     run aggregation query on existing table, and return results.
+#'   \item If table exists and \code{force = TRUE}: Execute script (which will
+#'     overwrite the table), then run aggregation.
+#'   \item If table does not exist: Execute script normally.
+#' }
+#'
+#' If no database connection is provided, table existence cannot be checked
+#' and scripts will always be executed when \code{execute = TRUE}.
+#'
+#' @section Table Existence Check:
+#' The function parses the table name into schema and table components and
+#' queries the PostgreSQL \code{information_schema.tables} to check existence.
+#' This requires the connection to have appropriate read permissions.
 #'
 #' @examples
 #' \dontrun{
@@ -1031,13 +1050,22 @@ build_skymap_parallel_script <- function(runid, type_conditions_list, schema = "
 #' scripts <- list(skymap = build_skymap_parallel_script(90005, type_conditions))
 #' preview <- execute_parallel_scripts(scripts, execute = FALSE, debug = TRUE)
 #'
-#' # Execute with aggregation
-#' results <- execute_parallel_scripts(scripts, conn = conn, execute = TRUE)
-#' final_data <- results$skymap$aggregated_data
+#' # Execute only if tables don't exist (safe mode)
+#' results <- execute_parallel_scripts(scripts, conn = conn, execute = TRUE, force = FALSE)
+#'
+#' # Force re-execution even if tables exist
+#' results <- execute_parallel_scripts(scripts, conn = conn, execute = TRUE, force = TRUE)
+#'
+#' # Check if execution was skipped
+#' if (results$skymap$skipped) {
+#'   cat("Used existing table data\n")
+#' }
 #' }
 #'
+#' @seealso \code{\link{check_table_exists}} for table existence checking
+#'
 #' @export
-execute_parallel_scripts <- function(scripts, conn = NULL, execute = FALSE, debug = FALSE) {
+execute_parallel_scripts <- function(scripts, conn = NULL, execute = FALSE, force = FALSE, debug = FALSE) {
   results <- list()
 
   for (i in seq_along(scripts)) {
@@ -1057,28 +1085,87 @@ execute_parallel_scripts <- function(scripts, conn = NULL, execute = FALSE, debu
     }
 
     if (execute) {
-      cat(sprintf("Executing script %d/%d: %s\n", i, length(scripts), script_name))
+      cat(sprintf("Processing script %d/%d: %s\n", i, length(scripts), script_name))
 
-      exit_code <- system(script_info$script, intern = FALSE)
+      # Check if table already exists
+      table_exists <- FALSE
+      if (!is.null(conn)) {
+        table_exists <- check_table_exists(conn, script_info$table_name)
+        if (table_exists) {
+          cat(sprintf("  Table '%s' already exists.\n", script_info$table_name))
+        }
+      }
 
-      if (exit_code != 0) {
-        warning(sprintf("Script %s failed with exit code %d", script_name, exit_code))
-        results[[script_name]] <- list(success = FALSE, exit_code = exit_code)
-      } else {
+      # Decide whether to execute
+      should_execute <- !table_exists || force
+
+      if (table_exists && !force) {
+        cat(sprintf("  Skipping execution (use force=TRUE to re-execute).\n"))
+        cat(sprintf("  Using existing table for aggregation.\n"))
+
         results[[script_name]] <- list(
           success = TRUE,
+          skipped = TRUE,
           table_name = script_info$table_name,
           alias_map = script_info$alias_map,
           alias_legend = script_info$alias_legend
         )
 
+        # Run aggregation on existing table
         if (!is.null(conn)) {
-          cat(sprintf("Executing aggregation for %s...\n", script_name))
-          agg_result <- dbGetQuery(conn, script_info$aggregation_query)
-          results[[script_name]]$aggregated_data <- agg_result
+          cat(sprintf("  Executing aggregation for %s...\n", script_name))
+          tryCatch({
+            agg_result <- DBI::dbGetQuery(conn, script_info$aggregation_query)
+            results[[script_name]]$aggregated_data <- agg_result
+            cat(sprintf("  Aggregation complete: %d rows\n", nrow(agg_result)))
+          }, error = function(e) {
+            warning(sprintf("Aggregation failed for %s: %s", script_name, e$message))
+            results[[script_name]]$aggregation_error <- e$message
+          })
+        }
+
+      } else {
+        # Execute the script
+        if (table_exists && force) {
+          cat(sprintf("  Force flag set - re-executing script.\n"))
+        }
+        cat(sprintf("  Executing script...\n"))
+
+        exit_code <- system(script_info$script, intern = FALSE)
+
+        if (exit_code != 0) {
+          warning(sprintf("Script %s failed with exit code %d", script_name, exit_code))
+          results[[script_name]] <- list(
+            success = FALSE,
+            skipped = FALSE,
+            exit_code = exit_code
+          )
+        } else {
+          results[[script_name]] <- list(
+            success = TRUE,
+            skipped = FALSE,
+            table_name = script_info$table_name,
+            alias_map = script_info$alias_map,
+            alias_legend = script_info$alias_legend
+          )
+
+          # Run aggregation
+          if (!is.null(conn)) {
+            cat(sprintf("  Executing aggregation for %s...\n", script_name))
+            tryCatch({
+              agg_result <- DBI::dbGetQuery(conn, script_info$aggregation_query)
+              results[[script_name]]$aggregated_data <- agg_result
+              cat(sprintf("  Aggregation complete: %d rows\n", nrow(agg_result)))
+            }, error = function(e) {
+              warning(sprintf("Aggregation failed for %s: %s", script_name, e$message))
+              results[[script_name]]$aggregation_error <- e$message
+            })
+          }
         }
       }
+
     } else {
+      # Preview mode - no execution
       results[[script_name]] <- list(
         script = script_info$script,
         table_name = script_info$table_name,
@@ -1092,6 +1179,76 @@ execute_parallel_scripts <- function(scripts, conn = NULL, execute = FALSE, debu
   return(results)
 }
 
+
+#' Check if Table Exists in Database
+#'
+#' Queries the PostgreSQL information schema to determine if a table exists.
+#' Handles fully-qualified table names (schema.table) by parsing them into
+#' components.
+#'
+#' @param conn A DBI database connection object.
+#' @param table_name Character string. Table name, optionally qualified with
+#'   schema (e.g., "schema.table" or just "table").
+#'
+#' @return Logical. TRUE if the table exists, FALSE otherwise.
+#'
+#' @details
+#' The function parses the table name to extract schema and table components:
+#' \itemize{
+#'   \item If format is "schema.table": Uses specified schema
+#'   \item If format is "table": Uses "public" as default schema
+#' }
+#'
+#' The existence check queries \code{information_schema.tables} which requires
+#' SELECT permission on that system catalog.
+#'
+#' @examples
+#' \dontrun{
+#' conn <- DBI::dbConnect(RPostgres::Postgres(), dbname = "gaia")
+#'
+#' # Check with schema
+#' check_table_exists(conn, "dr4_ops_cs48_mv.skymap_cepheidandrrlyrae_merged")
+#'
+#' # Check without schema (uses public)
+#' check_table_exists(conn, "my_table")
+#'
+#' DBI::dbDisconnect(conn)
+#' }
+#'
+#' @seealso \code{\link{execute_parallel_scripts}} which uses this function
+#'
+#' @export
+check_table_exists <- function(conn, table_name) {
+  # Parse schema.table format
+  parts <- strsplit(table_name, "\\.")[[1]]
+
+  if (length(parts) == 2) {
+    schema_name <- parts[1]
+    tbl_name <- parts[2]
+  } else {
+    schema_name <- "public"
+    tbl_name <- table_name
+  }
+
+  # Query information_schema to check table existence
+  query <- sprintf("
+    SELECT EXISTS (
+      SELECT 1
+      FROM information_schema.tables
+      WHERE table_schema = '%s'
+        AND table_name = '%s'
+    ) AS table_exists",
+                   schema_name, tbl_name
+  )
+
+  tryCatch({
+    result <- DBI::dbGetQuery(conn, query)
+    return(as.logical(result$table_exists[1]))
+  }, error = function(e) {
+    warning(sprintf("Failed to check table existence: %s", e$message))
+    return(FALSE)
+  })
+}
 
 # =============================================================================
 # MAIN WORKFLOW

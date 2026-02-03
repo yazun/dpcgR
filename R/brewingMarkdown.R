@@ -538,3 +538,206 @@ brew_plotly_histogram_chunks <- function(plot_list, output_file = NULL) {
     file_pattern = "brewed_plotly_histogram_chunks_"
   )
 }
+
+
+
+library(plotly)
+library(dplyr)
+
+#' Generate Plotly Histograms from Histogram Analysis Results
+#'
+#' @param hist_results Results from run_histogram_analysis() or a data frame with histogram data
+#' @param log_scale_threshold Ratio threshold for auto log scale (default 100)
+#' @param bar_color Color for histogram bars (default 'rgba(55, 128, 191, 0.7)')
+#' @param line_color Color for cumulative line (default 'rgba(55, 128, 191, 1.0)')
+#' @return Named list of plotly histogram objects
+generate_histogram_plots <- function(hist_results,
+                                     log_scale_threshold = 100,
+                                     bar_color = 'rgba(55, 128, 191, 0.7)',
+                                     line_color = 'rgba(55, 128, 191, 1.0)') {
+
+  # Extract the histogram data frame from results
+  if (is.list(hist_results) && !is.data.frame(hist_results)) {
+    if (!is.null(hist_results$histogram_for_viz)) {
+      hist_df <- hist_results$histogram_for_viz
+    } else if (!is.null(hist_results$combined_histograms)) {
+      hist_df <- hist_results$combined_histograms
+    } else {
+      stop("Cannot find histogram data in hist_results")
+    }
+  } else {
+    hist_df <- hist_results
+  }
+
+  # Ensure numeric types
+  hist_df <- hist_df %>%
+    mutate(
+      freq = as.numeric(freq),
+      nan_count = as.numeric(nan_count),
+      non_nan_count = as.numeric(non_nan_count),
+      bucket_avg = as.numeric(bucket_avg),
+      global_min = as.numeric(global_min),
+      global_max = as.numeric(global_max)
+    )
+
+  # Helper function to determine if log scale should be used
+  should_use_log_scale <- function(df_subset) {
+    freq_range <- range(df_subset$freq, na.rm = TRUE)
+    if (freq_range[1] > 0 && freq_range[2] / freq_range[1] > log_scale_threshold) {
+      return(TRUE)
+    }
+    return(FALSE)
+  }
+
+  # Function to create histogram for a single attribute
+  create_single_histogram <- function(data, tbl_name, col_name) {
+
+    df_subset <- data %>%
+      filter(table_name == !!tbl_name,
+             column_name == !!col_name)
+
+    if (nrow(df_subset) == 0) {
+      warning(sprintf("No data found for %s.%s", tbl_name, col_name))
+      return(NULL)
+    }
+
+    # Calculate cumulative frequency
+    df_subset <- df_subset %>%
+      arrange(bucket) %>%
+      mutate(cumulative_freq = cumsum(freq))
+
+    # Get metadata for subtitle
+    nan_count <- df_subset$nan_count[1]
+    non_nan_count <- df_subset$non_nan_count[1]
+
+    # Determine if log scale should be used
+    use_log_scale <- should_use_log_scale(df_subset)
+
+    # Create the plot
+    fig <- plot_ly()
+
+    # Add histogram bars
+    fig <- fig %>%
+      add_bars(
+        data = df_subset,
+        x = ~bucket_avg,
+        y = ~freq,
+        name = 'Frequency',
+        marker = list(
+          color = bar_color,
+          line = list(color = line_color, width = 1)
+        ),
+        hovertemplate = paste(
+          '<b>Bucket:</b> %{x:.2f}<br>',
+          '<b>Frequency:</b> %{y}<br>',
+          '<extra></extra>'
+        )
+      )
+
+    # Add cumulative frequency line
+    fig <- fig %>%
+      add_lines(
+        data = df_subset,
+        x = ~bucket_avg,
+        y = ~cumulative_freq,
+        name = 'Cumulative',
+        yaxis = 'y2',
+        line = list(color = line_color, width = 2),
+        hovertemplate = paste(
+          '<b>Bucket:</b> %{x:.2f}<br>',
+          '<b>Cumulative:</b> %{y}<br>',
+          '<extra></extra>'
+        )
+      )
+
+    # Layout with title and subtitle
+    fig <- fig %>%
+      layout(
+        title = list(
+          text = paste0(
+            '<b>', col_name, '</b><br>',
+            '<sup>', tbl_name,
+            ' | Non-NaN: ', format(non_nan_count, big.mark = ','),
+            ' | NaN: ', format(nan_count, big.mark = ','), '</sup>'
+          ),
+          font = list(size = 16)
+        ),
+        xaxis = list(title = 'Value'),
+        yaxis = list(
+          title = 'Frequency',
+          side = 'left',
+          type = if(use_log_scale) 'log' else 'linear'
+        ),
+        yaxis2 = list(
+          title = 'Cumulative Count',
+          overlaying = 'y',
+          side = 'right',
+          type = if(use_log_scale) 'log' else 'linear'
+        ),
+        hovermode = 'x unified',
+        showlegend = TRUE,
+        legend = list(x = 0.8, y = 1)
+      )
+
+    return(fig)
+  }
+
+  # Get unique table and column combinations
+  table_col_combinations <- hist_df %>%
+    select(table_name, column_name) %>%
+    distinct()
+
+  cat(sprintf("Generating %d histogram plots...\n", nrow(table_col_combinations)))
+
+  # Generate all histograms
+  histogram_list <- list()
+  for (i in 1:nrow(table_col_combinations)) {
+    tbl <- table_col_combinations$table_name[i]
+    col <- table_col_combinations$column_name[i]
+
+    histogram_list[[i]] <- create_single_histogram(hist_df, tbl, col)
+  }
+
+  # Add meaningful names to the list
+  names(histogram_list) <- paste(
+    table_col_combinations$table_name,
+    table_col_combinations$column_name,
+    sep = "."
+  )
+
+  # Remove any NULL entries
+  histogram_list <- histogram_list[!sapply(histogram_list, is.null)]
+
+  cat(sprintf("Generated %d histogram plots\n", length(histogram_list)))
+
+  return(histogram_list)
+}
+
+# ============================================================================
+# USAGE EXAMPLE
+# ============================================================================
+#
+# # Generate plots from analysis results
+# histogram_list <- generate_histogram_plots(sosHistAll)
+#
+# # Or with custom settings
+# histogram_list <- generate_histogram_plots(
+#   sosHistAll,
+#   log_scale_threshold = 50,
+#   bar_color = 'rgba(100, 150, 200, 0.7)',
+#   line_color = 'rgba(100, 150, 200, 1.0)'
+# )
+#
+# # Display a specific histogram
+# histogram_list[["sos_cepheidsattributes.frequency"]]
+#
+# # Use with your brewing function
+# brew_plotly_histogram_chunks <- function(plot_list, output_file = NULL) {
+#   brew_plotly_chunks(
+#     plot_list = plot_list,
+#     plot_list_var_name = "histogram_list",
+#     output_file = output_file,
+#     file_pattern = "brewed_plotly_histogram_chunks_"
+#   )
+# }
+#

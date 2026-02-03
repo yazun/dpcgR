@@ -24,7 +24,7 @@ expand_aliases_in_pivoted <- function(skymap_pivoted, alias_map) {
 }
 
 # Wrapper function to plot histograms from skymap results
-#' PLotting skymaps from parallel aggregates.
+#' Plotting skymaps from parallel aggregates.
 #'
 #' @param results Results to plot
 #' @param output_dir output_dir

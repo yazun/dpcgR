@@ -506,7 +506,6 @@ brew_plotly_chunks <- function(plot_list,
 #'
 #' @param plot_list A named list of plotly histogram objects. Names should
 #'   follow the SOS analysis naming convention.
-#' @param plot_list_var_name name of the dataframe to embed
 #' @param output_file Character string specifying the output file path.
 #'   If \code{NULL} (default), creates a temporary file.
 #'
@@ -531,10 +530,10 @@ brew_plotly_chunks <- function(plot_list,
 #'   \code{\link{plot_histogram_from_dataframe}} for creating the plotly objects
 #'
 #' @export
-brew_plotly_histogram_chunks <- function(plot_list, plot_list_var_name,  output_file = NULL) {
+brew_plotly_histogram_chunks <- function(plot_list,   output_file = NULL) {
   brew_plotly_chunks(
     plot_list = plot_list,
-    plot_list_var_name = plot_list_var_name,
+    plot_list_var_name = deparse(substitute(plot_list)),
     output_file = output_file,
     file_pattern = "brewed_plotly_histogram_chunks_"
   )

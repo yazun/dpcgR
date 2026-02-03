@@ -1648,3 +1648,201 @@ create_attribute_histogram <- function(data, table_col_combo) {
 
   return(fig)
 }
+
+plotAitoffGalactic <- function(skyMapD, valueName, titleName, legendName,
+                               subtitleName = NULL,
+                               hpxLevel = 8,
+                               point_alpha = NULL, point_delta = NULL,
+                               use_log_scale = FALSE, log_base = 10) {
+  library(viridis)
+  library(rlang)
+
+  skyMapFixed = skyMapD %>% mutate(alpha = ifelse(alpha>=0, alpha, 360 + alpha))
+
+  skyMapGalactic = data.frame(skyMapFixed, togalactic(skyMapFixed$alpha, skyMapFixed$delta)) %>%
+    mutate(aitoff_coords = aitoffFn(gl, gb),
+           aitoffGl = aitoff_coords$x,
+           aitoffGb = aitoff_coords$y)
+
+  # Handle both string and symbol inputs for valueName
+  if(is.character(valueName)) {
+    valName <- sym(valueName)
+    column_name <- valueName
+  } else {
+    valName <- ensym(valueName)
+    column_name <- as_name(valName)
+  }
+
+  hpxDeg = dfHPX[dfHPX$Level==hpxLevel,"sq_deg"]
+  theme <- theme_void() + theme(
+    plot.title = element_text(hjust = 0.5, size=9),
+    plot.subtitle = element_text(hjust = 0.5, size=7),
+    plot.tag = element_text(hjust = 0.5),
+    legend.position = "right",
+    legend.justification = c(0, 0.5),
+    legend.box.just = "left",
+    legend.title.align = 0,
+    legend.text.align = 0,
+    aspect.ratio = 1/2
+  )
+
+  # Create the base plot
+  p <- ggplot(skyMapGalactic, aes(x=aitoffGl, y=aitoffGb)) +
+    ggtitle(titleName, subtitle = subtitleName) +
+    geom_point(aes(colour = !!valName), alpha = .6, size = .15) +
+    scale_x_reverse() +
+    coord_fixed(ratio = 1) +
+    theme
+
+  # Configure color scale based on log option
+  if (use_log_scale) {
+    data_values <- skyMapGalactic[[column_name]]
+    data_values <- data_values[!is.na(data_values) & data_values > 0]
+
+    if(length(data_values) == 0) {
+      stop("No positive values found for logarithmic scaling")
+    }
+
+    min_val <- min(data_values, na.rm = TRUE)
+    max_val <- max(data_values, na.rm = TRUE)
+
+    if(log_base == 10) {
+      log_min <- floor(log10(min_val))
+      log_max <- ceiling(log10(max_val))
+      legend_breaks <- 10^seq(log_min, log_max, by = 1)
+
+      if((log_max - log_min) <= 2) {
+        intermediate_breaks <- c(2, 3, 4, 5, 6, 7, 8, 9)
+        all_breaks <- c()
+        for(i in log_min:log_max) {
+          all_breaks <- c(all_breaks, 10^i)
+          if(i < log_max) {
+            intermediate <- intermediate_breaks * 10^i
+            intermediate <- intermediate[intermediate < 10^(i+1) & intermediate >= min_val & intermediate <= max_val]
+            all_breaks <- c(all_breaks, intermediate)
+          }
+        }
+        legend_breaks <- sort(unique(all_breaks))
+      }
+
+      legend_breaks <- sort(unique(c(min_val, legend_breaks, max_val)))
+
+      label_formatter <- function(x) {
+        sapply(x, function(val) {
+          if(is.na(val)) return(NA)
+          log_val <- log10(val)
+          if(abs(log_val - round(log_val)) < 1e-10) {
+            return(as.character(val))
+          } else {
+            return(sprintf("%.2g", val))
+          }
+        })
+      }
+
+      trans_name <- "log10"
+    } else {
+      log_min <- log(min_val, base = log_base)
+      log_max <- log(max_val, base = log_base)
+      n_breaks <- 6
+      legend_breaks <- log_base^seq(log_min, log_max, length.out = n_breaks)
+      legend_breaks <- sort(unique(c(min_val, legend_breaks, max_val)))
+
+      label_formatter <- function(x) {
+        sapply(x, function(val) {
+          if(is.na(val)) return(NA)
+          return(sprintf("%.2g", val))
+        })
+      }
+
+      if(log_base == exp(1)) {
+        trans_name <- "log"
+      } else {
+        trans_name <- scales::log_trans(base = log_base)
+      }
+    }
+
+    p <- p + scale_colour_viridis_c(
+      option = "magma",
+      breaks = legend_breaks,
+      labels = label_formatter,
+      trans = trans_name,
+      na.value = "grey50",
+      guide = guide_colourbar(
+        title = bquote(atop(.(legendName), "per " ~ (.(hpxDeg) ~ Deg^2))),
+        barwidth = 1.5,
+        barheight = 20,
+        title.position = "top",
+        title.hjust = 0.5,
+        ticks.linewidth = 1,
+        label.position = "right",
+        label.hjust = 0
+      )
+    )
+
+  } else {
+    # Linear scale
+    data_values <- skyMapGalactic[[column_name]]
+    data_values <- data_values[!is.na(data_values)]
+
+    if(length(data_values) > 0) {
+      min_val <- min(data_values, na.rm = TRUE)
+      max_val <- max(data_values, na.rm = TRUE)
+
+      if(min_val >= -0.1 && max_val <= 0.1) {
+        legend_breaks <- c(-0.1, -0.075, -0.05, -0.025, 0, 0.025, 0.05, 0.075, 0.1)
+        legend_breaks <- legend_breaks[legend_breaks >= min_val & legend_breaks <= max_val]
+        legend_breaks <- sort(unique(c(min_val, legend_breaks, max_val)))
+      } else {
+        n_breaks <- 8
+        legend_breaks <- seq(min_val, max_val, length.out = n_breaks)
+      }
+    } else {
+      legend_breaks <- c(-0.1, -0.075, -0.05, -0.025, 0, 0.025, 0.05, 0.075, 0.1)
+    }
+
+    label_formatter <- function(x) {
+      sapply(x, function(val) {
+        if(is.na(val)) return(NA)
+        if(abs(val) < 0.001) {
+          return(sprintf("%.4f", val))
+        } else if(abs(val) < 1) {
+          return(sprintf("%.3f", val))
+        } else {
+          return(sprintf("%.2f", val))
+        }
+      })
+    }
+
+    p <- p + scale_colour_viridis_c(
+      option = "magma",
+      breaks = legend_breaks,
+      labels = label_formatter,
+      trans = "identity",
+      guide = guide_colourbar(
+        title = bquote(atop(.(legendName), "per " ~ (.(hpxDeg) ~ Deg^2))),
+        barwidth = 1.5,
+        barheight = 20,
+        title.position = "top",
+        title.hjust = 0.5,
+        ticks.linewidth = 1,
+        label.position = "right",
+        label.hjust = 0
+      )
+    )
+  }
+
+  # Add red point if coordinates provided
+  if (!is.null(point_alpha) && !is.null(point_delta)) {
+    point_alpha_fixed <- ifelse(point_alpha >= 0, point_alpha, 360 + point_alpha)
+    point_aitoff <- aitoffFn(point_alpha_fixed, point_delta)
+
+    p <- p + geom_point(data = data.frame(x = point_aitoff$x, y = point_aitoff$y),
+                        aes(x = x, y = y),
+                        colour = "red",
+                        size = 3,
+                        alpha = 1,
+                        inherit.aes = FALSE)
+  }
+
+  return(p)
+}

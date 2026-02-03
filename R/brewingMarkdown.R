@@ -551,6 +551,8 @@ library(dplyr)
 #' @param bar_color Color for histogram bars (default 'rgba(55, 128, 191, 0.7)')
 #' @param line_color Color for cumulative line (default 'rgba(55, 128, 191, 1.0)')
 #' @return Named list of plotly histogram objects
+#'
+#' @export
 generate_histogram_plots <- function(hist_results,
                                      log_scale_threshold = 100,
                                      bar_color = 'rgba(55, 128, 191, 0.7)',

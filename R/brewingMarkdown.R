@@ -63,8 +63,6 @@ library(tools)
 #' }
 #'
 
-
-
 #' Generate R Markdown Code Chunks from a Named Plot List
 #'
 #' Creates an R Markdown file containing code chunks that render each plot from
@@ -81,8 +79,8 @@ library(tools)
 #'   match the actual variable name in the R environment where the Rmd will
 #'   be knitted.
 #' @param output_file Character string specifying the output file path.
-#'   If \code{NULL} (default), creates a temporary file in the current
-#'   working directory.
+#'   If \code{NULL} (default), creates a temporary file in the system temp
+#'   directory.
 #' @param fig_height Numeric specifying the figure height in inches for
 #'   the generated chunks. Default is \code{10}.
 #' @param fig_width Numeric specifying the figure width in inches for
@@ -156,20 +154,18 @@ brew_plot_chunks <- function(plot_list,
                              fig_width = 14,
                              file_pattern = "brewed_plot_chunks_") {
 
-
   # Create temp file if no output specified
-  # Uses current working directory for easy access
+  # Uses system temp directory to avoid permission issues
+
   if (is.null(output_file)) {
     output_file <- tempfile(
-      tmpdir = getwd(),
+      tmpdir = tempdir(),
       pattern = file_pattern,
       fileext = ".Rmd"
     )
   }
 
   # Clear file if it exists to ensure clean output
-  # This prevents appending to stale content
-
   if (file.exists(output_file)) {
     file.remove(output_file)
   }
@@ -184,7 +180,6 @@ brew_plot_chunks <- function(plot_list,
   }
 
   # Store backtick character for building code fence syntax
-  # Using variable avoids escaping issues in string construction
   backtick <- "`"
 
   # Iterate through each plot and generate corresponding Rmd chunk
@@ -192,34 +187,36 @@ brew_plot_chunks <- function(plot_list,
     plot_name <- plot_names[i]
 
     # Parse plot name to create readable section title
-    # Expected format: "sosname_classifier_type" or "sosname_merged_type"
     parts <- strsplit(plot_name, "_")[[1]]
 
     # Create section title based on plot naming convention
-    if ("merged" %in% parts) {
+    if (length(parts) >= 3 && "merged" %in% parts) {
       # Handle merged plots: "sosname_merged_with_cuts" -> "SOS Name - Merged (With Cuts)"
-      # First part is always the SOS name
       sosname <- parts[1]
-      # Everything after "merged" describes the cut type
-      type_parts <- parts[3:length(parts)]
-      type_str <- paste(toTitleCase(type_parts), collapse = " ")
-      section_title <- sprintf("%s - Merged (%s)", sosname, type_str)
-    } else {
+      merged_idx <- which(parts == "merged")
+      if (merged_idx < length(parts)) {
+        type_parts <- parts[(merged_idx + 1):length(parts)]
+        type_str <- paste(tools::toTitleCase(type_parts), collapse = " ")
+        section_title <- sprintf("%s - Merged (%s)", sosname, type_str)
+      } else {
+        section_title <- sprintf("%s - Merged", sosname)
+      }
+    } else if (length(parts) >= 3) {
       # Handle classifier plots: "sosname_classifier_with_cuts"
-      # Format: SOS name, classifier name, then cut type descriptor
       sosname <- parts[1]
       classifier <- parts[2]
       type_parts <- parts[3:length(parts)]
-      type_str <- paste(toTitleCase(type_parts), collapse = " ")
+      type_str <- paste(tools::toTitleCase(type_parts), collapse = " ")
       section_title <- sprintf("%s - %s (%s)", sosname, classifier, type_str)
+    } else {
+      # Fallback: just use the plot name with underscores replaced
+      section_title <- gsub("_", " ", plot_name)
     }
 
     # Create safe chunk name (no spaces, special chars)
-    # R Markdown chunk labels must be alphanumeric with underscores
     chunk_name <- paste0("plot_", gsub("[^a-zA-Z0-9_]", "_", plot_name))
 
     # Build the complete R Markdown template for this plot
-    # Includes: level-3 header, code chunk with figure dimensions, plot rendering call
     template <- paste0(
       "### ", section_title, "\n\n",
       backtick, backtick, backtick, "{r ", chunk_name,
@@ -229,7 +226,6 @@ brew_plot_chunks <- function(plot_list,
     )
 
     # Append chunk to output file
-    # Using append=TRUE allows sequential building of the document
     cat(template, file = output_file, append = TRUE)
   }
 

@@ -26,15 +26,13 @@ expand_aliases_in_pivoted <- function(skymap_pivoted, alias_map) {
 # Wrapper function to plot histograms from skymap results
 #' PLotting skymaps from parallel aggregates.
 #'
-#' @param results
-#' @param output_dir
-#' @param show_plots
-#' @param show_training
+#' @param results Results to plot
+#' @param output_dir output_dir
+#' @param show_plots if to show plots straight away via print
+#' @param show_training if to show training sources in the plots
 #'
-#' @returns
+#' @return set of histograms
 #' @export
-#'
-#' @examples
 #'
 plot_histograms_from_skymap_results <- function(results,
                                                 output_dir = "histogram_plots",

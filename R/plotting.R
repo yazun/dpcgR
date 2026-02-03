@@ -1649,6 +1649,23 @@ create_attribute_histogram <- function(data, table_col_combo) {
   return(fig)
 }
 
+#' Plot aitoff
+#'
+#' @param skyMapD Skymap dataframe
+#' @param valueName name of the value to plot from the dataframe
+#' @param titleName Plot title
+#' @param legendName Legend name
+#' @param subtitleName Subtitle
+#' @param hpxLevel 8 by default
+#' @param point_alpha point to highlight if needed
+#' @param point_delta point to highlight if needed
+#' @param use_log_scale For big values
+#' @param log_base log base
+#'
+#' @return ggplot
+#' @export
+#'
+
 plotAitoffGalactic <- function(skyMapD, valueName, titleName, legendName,
                                subtitleName = NULL,
                                hpxLevel = 8,

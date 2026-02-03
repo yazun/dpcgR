@@ -70,8 +70,7 @@ aitoffFn <- function (l, b) {
 #' @examples togalactic(pi/4,pi/4)
 #'
 #'
-
-function(ra, dec) {
+togalactic<-function(ra, dec) {
   radeg <- 180/pi
 
   # Galactic pole coordinates (J2000, FK5)

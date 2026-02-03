@@ -38,7 +38,7 @@ library(tools)
 #'}
 brew_plot_chunks<- function (listItems, fn, xm.groups, xm.skymapData) {
 
-  brewed.chunks <- tempfile(tmpdir = getwd(), pattern = "brewed-chunks_", fileext = ".Rmd")
+  brewed.chunks <- tempfile(tmpdir = tempdir(), pattern = "brewed-chunks_", fileext = ".Rmd")
   # this parallelizes calcualation. But rendering is slow on the current device with plot in subsequent chunks, not this.
   chunksData = future_lapply(xm.groups,
                              function(x)   fn(classGroup =  x, xm.skymap = xm.skymapData ))

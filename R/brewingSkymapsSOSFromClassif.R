@@ -805,6 +805,6 @@ brew_skymap_chunks_pivoted <- function(plot_list, output_file = NULL) {
     output_file = output_file,
     fig_height = 8,
     fig_width = 12,
-    file_pattern = file.path(tempdir(), "brewed_skymap_chunks_pivoted_")
+    file_pattern = "brewed_skymap_chunks_pivoted_"
   )
 }

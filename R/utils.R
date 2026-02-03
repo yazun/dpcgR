@@ -68,46 +68,49 @@ aitoffFn <- function (l, b) {
 #'
 #'
 #' @examples togalactic(pi/4,pi/4)
-togalactic <- function (ra, dec) {
-  radeg = 180/pi
-  # 1950
-  rapol = 12 + 49/60
-  decpol = 27.4
-  dlon = 123
+#'
+#'
 
-  ras = ra * radeg
-  decs = dec * radeg
+function(ra, dec) {
+  radeg <- 180/pi
 
-  tmp = bprecess(ras, decs)
-  ras = tmp$ra_1950
-  decs = tmp$dec_1950
+  # Galactic pole coordinates (J2000, FK5)
+  # North Galactic Pole: RA = 192.859508°, Dec = 27.128336°
+  rapol <- 192.859508  # degrees
+  decpol <- 27.128336  # degrees
 
-  # J2000 FK5
-  # rapol = 12 + 51.4/60
-  # decpol = 27.13
-  # dlon = 123
-  #19h50m47s and delta=8d52m6s (FK5, J2000)
-  # rapol = 19 + 50.47/60
-  # decpol = 8 + 13/60 + 6/3600
+  # Galactic center: l=0°, b=0° corresponds to RA=266.405°, Dec=-28.936° (J2000)
+  # Node at l=33° (galactic longitude of north celestial pole)
+  l_ncp <- 122.932  # degrees (galactic longitude of NCP)
 
-  sdp = sin(decpol/radeg)
-  cdp = sqrt(1 - sdp * sdp)
-  radhrs = radeg/15
+  # Convert input to radians
+  ra_rad <- ra / radeg
+  dec_rad <- dec / radeg
+  rapol_rad <- rapol / radeg
+  decpol_rad <- decpol / radeg
 
-  ras = ras/radeg - rapol/radhrs
-  sdec = sin(decs/radeg)
-  cdec = sqrt(1 - sdec * sdec)
-  sgb = sdec * sdp + cdec * cdp * cos(ras)
-  gb = radeg * asin(sgb)
-  cgb = sqrt(1 - sgb * sgb)
-  sine = cdec * sin(ras)/cgb
-  cose = (sdec - sdp * sgb)/(cdp * cgb)
-  gl = dlon - radeg * atan2(sine, cose)
-  ltzero = (gl < 0)
-  gl[ltzero] = gl[ltzero] + 360
+  # Compute galactic latitude
+  sdp <- sin(decpol_rad)
+  cdp <- cos(decpol_rad)
+  sdec <- sin(dec_rad)
+  cdec <- cos(dec_rad)
+
+  # Galactic latitude
+  sgb <- sdec * sdp + cdec * cdp * cos(ra_rad - rapol_rad)
+  gb <- radeg * asin(sgb)
+
+  # Galactic longitude
+  cgb <- cos(gb / radeg)
+  sine <- cdec * sin(ra_rad - rapol_rad) / cgb
+  cose <- (sdec - sdp * sgb) / (cdp * cgb)
+
+  gl <- l_ncp - radeg * atan2(sine, cose)
+
+  # Normalize to 0-360 range
+  gl <- gl %% 360
+
   return(data.frame(gl = gl, gb = gb))
 }
-
 
 
 #' Export results to DB and other means with a given name

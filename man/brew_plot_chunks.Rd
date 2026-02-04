@@ -2,17 +2,8 @@
 % Please edit documentation in R/brewingMarkdown.R
 \name{brew_plot_chunks}
 \alias{brew_plot_chunks}
-\title{Create markdown chunks automatically.}
+\title{Generate R Markdown Code Chunks from a Named Plot List}
 \usage{
-brew_plot_chunks(
-  plot_list,
-  plot_list_var_name,
-  output_file = NULL,
-  fig_height = 10,
-  fig_width = 14,
-  file_pattern = "brewed_plot_chunks_"
-)
-
 brew_plot_chunks(
   plot_list,
   plot_list_var_name,
@@ -34,8 +25,8 @@ match the actual variable name in the R environment where the Rmd will
 be knitted.}
 
 \item{output_file}{Character string specifying the output file path.
-If \code{NULL} (default), creates a temporary file in the current
-working directory.}
+If \code{NULL} (default), creates a temporary file in the system temp
+directory.}
 
 \item{fig_height}{Numeric specifying the figure height in inches for
 the generated chunks. Default is \code{10}.}
@@ -46,25 +37,12 @@ the generated chunks. Default is \code{14}.}
 \item{file_pattern}{Character string specifying the prefix for temporary
 file names when \code{output_file} is \code{NULL}. Default is
 \code{"brewed_plot_chunks_"}.}
-
-\item{listItems}{list of items to generate chunks on}
-
-\item{fn}{function to generate data for the listItems}
-
-\item{xm.groups}{actual data}
-
-\item{xm.skymapData}{additional data, here the skymap for the function \code{fn}.}
 }
 \value{
-chunks to be included in the markdown via 'child' reference
-
 Character string containing the path to the generated R Markdown
   file, or \code{NULL} if the plot list is empty.
 }
 \description{
-Check the code in the notebook as it contains escapes confusing for generated HTML.
-Data for chunks is created in parallel and chunks are generated based on the created data, then executed in-place with the `child` argument of the chunk.
-
 Creates an R Markdown file containing code chunks that render each plot from
 a named list. This function automates report generation by converting plot
 collections into properly formatted Rmd sections with headers derived from
@@ -97,16 +75,6 @@ The generated file is designed to be included in a parent R Markdown document
 using \code{child} chunks or concatenated with other Rmd content.
 }
 \examples{
-\dontrun{brewed.chunks = brew_plot_chunks(xm.groups_big[1]
-,plotAitoffGalacticOverlayBig
-,xm.groups_big
-,xm.skymap)
-
-# include all brewed chunks
-```{r brewing_big_chunks, child = brewed.chunks}
-
-```
-}
 \dontrun{
 # Create a named list of plots
 my_plots <- list(

@@ -417,3 +417,17 @@ bprecess = function(
 
   return(list(ra_1950 = ra_1950, dec_1950=dec_1950))
 }
+
+#' Title
+#'
+#' @param x Array to be paarsed as list
+#'
+#' @returns list.
+#' @export
+#'
+
+parse_pg_array <- function(x) {
+  if (is.na(x) || x == "{}" || x == "") return(character(0))
+  elements <- strsplit(gsub("^\\{|\\}$", "", x), ",")[[1]]
+  gsub('^"|"$', "", elements)  # remove quotes if present
+}

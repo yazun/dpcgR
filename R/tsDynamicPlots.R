@@ -103,13 +103,6 @@ library(dplyr)
 #' @export
 create_maximizable_plots <- function(ts.all, g, periodSet) {
 
-
-  #'
-  #' Maps timeseries tags to colors based on their photometric band suffix.
-  #'
-  #' @param tstags Character vector of timeseries tag names.
-  #' @return Named character vector mapping tags to color strings.
-  #' @keywords internal
   create_color_mapping <- function(tstags) {
     color_map <- character(length(tstags))
     names(color_map) <- tstags
@@ -452,7 +445,7 @@ create_maximizable_plots <- function(ts.all, g, periodSet) {
 #' @importFrom dplyr filter
 #'
 #' @export
-
+#'
 create_simple_plots <- function(ts.all, g, periodSet) {
 
   #' @describeIn create_maximizable_plots Internal color mapping helper

@@ -347,6 +347,17 @@ create_maximizable_plots <- function(ts.all, periodSet) {
       }
     ")
 
+
+  if (is.null(height)) {
+    # Auto-calculate based on number of sources
+    n_sources <- length(unique(ts.all$sourceid))
+    height <- n_sources * height_per_source
+  }
+
+  # Set height directly on the plotly object
+  main_plot$height <- height
+  main_plot$width <- NULL  # responsive width
+
   return(main_plot)
 }
 

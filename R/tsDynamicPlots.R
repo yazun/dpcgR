@@ -93,12 +93,35 @@ library(dplyr)
 #' @importFrom dplyr filter
 #'
 #' @export
-create_maximizable_plots <- function(ts.all, periodSet) {
 
-  f = ts.all %>% mutate (sourceid = as.integer64(sourceid)) %>% inner_join(periodSet, by ="sourceid")
-  g = f %>% group_by(sourceid, tstag) %>%
+
+#' Create Maximizable Multi-Source Timeseries Grid with Auto-Height
+#'
+#' @param ts.all Timeseries data frame
+#' @param periodSet Period information data frame
+#' @param plot_height Total height in pixels. If NULL, auto-calculated.
+#' @param height_per_source Height in pixels per source for auto-calculation. Default 250.
+#'
+#' @return A plotly object with height set
+#' @export
+create_maximizable_plots <- function(ts.all,
+                                     periodSet,
+                                     plot_height = NULL,
+                                     height_per_source = 250) {
+
+  # Auto-calculate height if not provided
+  if (is.null(plot_height)) {
+    n_sources <- length(unique(ts.all$sourceid))
+    plot_height <- n_sources * height_per_source
+  }
+
+  f <- ts.all %>%
+    mutate(sourceid = as.integer64(sourceid)) %>%
+    inner_join(periodSet, by = "sourceid")
+
+  g <- f %>%
+    group_by(sourceid, tstag) %>%
     do(get_folds(.))
-
 
   create_color_mapping <- function(tstags) {
     color_map <- character(length(tstags))
@@ -106,24 +129,22 @@ create_maximizable_plots <- function(ts.all, periodSet) {
 
     for(tag in tstags) {
       if(grepl("_G$", tag)) {
-        color_map[tag] <- "darkgrey"     # Gaia G-band
+        color_map[tag] <- "darkgrey"
       } else if(grepl("_RP$", tag)) {
-        color_map[tag] <- "red"          # Gaia RP-band
+        color_map[tag] <- "red"
       } else if(grepl("_BP$", tag)) {
-        color_map[tag] <- "blue"         # Gaia BP-band
+        color_map[tag] <- "blue"
       } else {
-        color_map[tag] <- "black"        # Unrecognized band fallback
+        color_map[tag] <- "black"
       }
     }
     return(color_map)
   }
 
-  # Extract unique source IDs and build color mapping
   sourceids <- unique(ts.all$sourceid)
   color_map <- create_color_mapping(unique(ts.all$tstag))
 
   # --- Build derived (raw) timeseries subplots ---
-  # One subplot per source, stacked vertically with shared x-axis
   derived_subplots <- list()
   for(i in seq_along(sourceids)) {
     source_data <- ts.all %>% filter(sourceid == sourceids[i])
@@ -144,15 +165,11 @@ create_maximizable_plots <- function(ts.all, periodSet) {
                  type = "scatter",
                  mode = "markers",
                  marker = list(size = 1),
-                 # Only show legend for first row to avoid duplication
                  showlegend = (i == 1),
                  name = ~tstag) %>%
       layout(
-        # Only label x-axis on bottom-most subplot
         xaxis = list(title = if(i == length(sourceids)) "JD" else "", titlefont = list(size = 10)),
-        # Reversed y-axis: brighter magnitudes (lower values) at top
         yaxis = list(title = "Magnitude", autorange = "reversed", titlefont = list(size = 10)),
-        # Source ID annotation above each subplot
         annotations = list(
           list(x = 0.5, y = 1.02, text = paste("Source ID:", sourceids[i]),
                xref = "paper", yref = "paper", xanchor = "center", showarrow = FALSE)
@@ -163,7 +180,6 @@ create_maximizable_plots <- function(ts.all, periodSet) {
   }
 
   # --- Build folded (phase) timeseries subplots ---
-  # One subplot per source, with period annotation and phase=1 marker
   folded_subplots <- list()
   for(i in seq_along(sourceids)) {
     source_data <- g %>% filter(sourceid == sourceids[i])
@@ -185,13 +201,11 @@ create_maximizable_plots <- function(ts.all, periodSet) {
                  type = "scatter",
                  mode = "markers",
                  marker = list(size = 1),
-                 # Legend already shown in derived subplots
                  showlegend = FALSE,
                  name = ~tstag) %>%
       layout(
         xaxis = list(title = if(i == length(sourceids)) "Phase" else "", titlefont = list(size = 10)),
         yaxis = list(title = "Magnitude", autorange = "reversed", titlefont = list(size = 10)),
-        # Dashed vertical line at phase = 1 separating the two periods
         shapes = list(
           list(
             type = "line",
@@ -202,10 +216,8 @@ create_maximizable_plots <- function(ts.all, periodSet) {
           )
         ),
         annotations = list(
-          # Source ID annotation above subplot
           list(x = 0.5, y = 1.02, text = paste("Source ID:", sourceids[i]),
                xref = "paper", yref = "paper", xanchor = "center", showarrow = FALSE),
-          # Period value annotation in upper-right corner
           list(x = 0.95, y = 0.95,
                text = paste("Period:", round(period_info$period[1], 4)),
                xref = "paper", yref = "paper", xanchor = "right", showarrow = FALSE,
@@ -216,15 +228,12 @@ create_maximizable_plots <- function(ts.all, periodSet) {
     folded_subplots[[i]] <- p
   }
 
-  # --- Combine subplots into final grid layout ---
-  # Stack each type vertically with shared x-axis within columns
+  # --- Combine subplots ---
   derived_grid <- subplot(derived_subplots, nrows = length(sourceids), shareX = TRUE, titleY = TRUE,
                           margin = 0.01)
   folded_grid <- subplot(folded_subplots, nrows = length(sourceids), shareX = TRUE, titleY = TRUE,
                          margin = 0.01)
 
-  # Place derived and folded grids side-by-side
-  # Y-axes are NOT shared between columns (different value ranges possible)
   main_plot <- subplot(derived_grid, folded_grid, nrows = 1, shareY = FALSE, titleX = TRUE,
                        margin = 0.02) %>%
     layout(
@@ -235,19 +244,50 @@ create_maximizable_plots <- function(ts.all, periodSet) {
       margin = list(l = 50, r = 50, t = 80, b = 120)
     )
 
-  # --- Attach shift+click maximize JavaScript ---
-  # Creates a full-screen overlay when user shift+clicks a data point
-  # Overlay includes: close button, ESC key handler, re-plotted trace at full size
+  # --- Attach JavaScript ---
+  # --- Attach JavaScript for shift+click maximize AND synchronized legend ---
   main_plot <- main_plot %>%
     onRender("
       function(el, x) {
+
+        // --- Synchronized legend click handler ---
+        el.on('plotly_legendclick', function(data) {
+          var clickedName = data.data[data.curveNumber].name;
+          var currentVisibility = data.data[data.curveNumber].visible;
+
+          // Determine new visibility state
+          // visible can be: true, false, 'legendonly', or undefined
+          var newVisibility;
+          if (currentVisibility === 'legendonly' || currentVisibility === false) {
+            newVisibility = true;
+          } else {
+            newVisibility = 'legendonly';
+          }
+
+          // Find all traces with the same name (same tstag across all subplots)
+          var update = {visible: []};
+          var traceIndices = [];
+
+          for (var i = 0; i < data.data.length; i++) {
+            if (data.data[i].name === clickedName) {
+              traceIndices.push(i);
+              update.visible.push(newVisibility);
+            }
+          }
+
+          // Apply visibility to all matching traces
+          Plotly.restyle(el, {visible: newVisibility}, traceIndices);
+
+          // Return false to prevent default legend click behavior
+          return false;
+        });
+
+        // --- Shift+click maximize handler ---
         el.on('plotly_click', function(data) {
-          // Only trigger on shift+click
           if (data.event.shiftKey) {
             var point = data.points[0];
             var plotData = point.data;
 
-            // Create full-screen overlay container
             var maximizedDiv = document.createElement('div');
             maximizedDiv.id = 'maximized-plot';
             maximizedDiv.style.position = 'fixed';
@@ -260,7 +300,6 @@ create_maximizable_plots <- function(ts.all, periodSet) {
             maximizedDiv.style.padding = '20px';
             maximizedDiv.style.boxSizing = 'border-box';
 
-            // Close button in top-right corner
             var closeBtn = document.createElement('button');
             closeBtn.innerHTML = 'Close (ESC or Shift+Click again)';
             closeBtn.style.position = 'absolute';
@@ -273,7 +312,6 @@ create_maximizable_plots <- function(ts.all, periodSet) {
             closeBtn.style.border = '1px solid #ccc';
             closeBtn.style.borderRadius = '4px';
 
-            // Plot container fills remaining space below close button
             var plotDiv = document.createElement('div');
             plotDiv.style.width = '100%';
             plotDiv.style.height = 'calc(100% - 60px)';
@@ -283,7 +321,6 @@ create_maximizable_plots <- function(ts.all, periodSet) {
             maximizedDiv.appendChild(plotDiv);
             document.body.appendChild(maximizedDiv);
 
-            // Re-create the clicked trace at full size with color mapping
             var newPlotData = [{
               x: plotData.x,
               y: plotData.y,
@@ -327,12 +364,10 @@ create_maximizable_plots <- function(ts.all, periodSet) {
 
             Plotly.newPlot(plotDiv, newPlotData, layout);
 
-            // Close on button click
             closeBtn.onclick = function() {
               document.body.removeChild(maximizedDiv);
             };
 
-            // Close on ESC key press
             var escHandler = function(e) {
               if (e.key === 'Escape') {
                 if (document.getElementById('maximized-plot')) {
@@ -347,16 +382,9 @@ create_maximizable_plots <- function(ts.all, periodSet) {
       }
     ")
 
-
-  if (is.null(height)) {
-    # Auto-calculate based on number of sources
-    n_sources <- length(unique(ts.all$sourceid))
-    height <- n_sources * height_per_source
-  }
-
-  # Set height directly on the plotly object
-  main_plot$height <- height
-  main_plot$width <- NULL  # responsive width
+  # Set height directly on the plotly object (not in layout)
+  main_plot$height <- plot_height
+  main_plot$width <- NULL
 
   return(main_plot)
 }

@@ -42,7 +42,8 @@
 #'     \itemize{
 #'       \item Skipping the header row (if it contains "sourceid")
 #'       \item Injecting the module name as the second column
-#'       \item Deriving boolean eligibility flags from non-empty column values
+#'       \item Passing through existing boolean values for eligibility flags,
+#'             or defaulting to \code{false} if the column is empty/missing
 #'     }
 #'   \item \code{psql COPY FROM STDIN} bulk-loads the transformed data into
 #'     the target table on \code{gaiadbgpu03i:55435}
@@ -110,12 +111,15 @@ import_final_selection <- function(con, sosSubName, isCSVBased, exportSQL = NULL
       "curl --noproxy gaiaowncloud.isdc.unige.ch --insecure -X GET --netrc-file ~/.netrc ",
       "'https://gaiaowncloud.isdc.unige.ch/remote.php/webdav/DRC4/FinalValidation/FinalRun/ExportSets/",
       sosSubName, ".csv' | ",
-      # Transform CSV: skip header, inject module name, derive eligibility flags
-      # Field $3/$4 presence determines phot/rv eligibility (1 if non-empty, 0 otherwise)
-      "awk -v module='", sosSubName, "' 'NR==1 && $0 !~ /sourceid/ || NR>1 {",
-      "eligibilityFlagPhot = ($3 != \"\" ? 1 : 0); ",
-      "eligibilityFlagRv = ($4 != \"\" ? 1 : 0); ",
-      "print $1\",\"module\",\"eligibilityFlagPhot\",\"eligibilityFlagRv",
+      # Transform CSV: skip header, inject module name, pass through or default eligibility flags
+      # - If field $3/$4 contains a value (true/false/t/f/1/0), pass it through
+      # - If field is empty or missing, default to "false"
+      "awk -F',' -v OFS=',' -v module='", sosSubName, "' '",
+      "NR==1 && tolower($0) ~ /sourceid/ { next } ",
+      "NR>0 { ",
+      "  phot = ($3 != \"\" ? $3 : \"false\"); ",
+      "  rv = ($4 != \"\" ? $4 : \"false\"); ",
+      "  print $1, module, phot, rv ",
       "}' | ",
       # Bulk-load via psql COPY directly from stdin
       "psql -h gaiadbgpu03i -U dr4_ops_cs48 -p 55435 -d surveys ",

@@ -31,14 +31,6 @@ library(dplyr)
 #'       Suffix determines color: \code{_G} -> darkgrey, \code{_RP} -> red,
 #'       \code{_BP} -> blue}
 #'   }
-#' @param g A data frame containing phase-folded timeseries data with columns:
-#'   \describe{
-#'     \item{sourceid}{Numeric or character Gaia source identifier}
-#'     \item{phases}{Numeric phase values (0 to 2, with dashed line at phase = 1)}
-#'     \item{magnitudes}{Numeric magnitude values}
-#'     \item{errors}{Numeric magnitude errors}
-#'     \item{tstag}{Character timeseries tag (same convention as \code{ts.all})}
-#'   }
 #' @param periodSet A data frame containing period information with columns:
 #'   \describe{
 #'     \item{sourceid}{Numeric or character Gaia source identifier}
@@ -101,7 +93,12 @@ library(dplyr)
 #' @importFrom dplyr filter
 #'
 #' @export
-create_maximizable_plots <- function(ts.all, g, periodSet) {
+create_maximizable_plots <- function(ts.all, periodSet) {
+
+  f = ts.all %>% mutate (sourceid = as.integer64(sourceid)) %>% inner_join(periodSet, by ="sourceid")
+  g = f %>% group_by(sourceid, tstag) %>%
+    do(get_folds(.))
+
 
   create_color_mapping <- function(tstags) {
     color_map <- character(length(tstags))

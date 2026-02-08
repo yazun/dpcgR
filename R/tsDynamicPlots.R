@@ -11,90 +11,6 @@ library(plotly)
 library(htmlwidgets)
 library(dplyr)
 
-
-#' Create Maximizable Multi-Source Timeseries Grid
-#'
-#' Generates an interactive plotly grid combining derived (raw) and
-#' phase-folded light curves for multiple sources. Each source occupies
-#' a row in the grid, with derived timeseries on the left and folded
-#' timeseries on the right. Supports shift+click to maximize individual
-#' subplots in a full-screen overlay.
-#'
-#' @param ts.all A data frame containing raw timeseries data with columns:
-#'   \describe{
-#'     \item{sourceid}{Numeric or character Gaia source identifier}
-#'     \item{obstime}{Numeric observation time in Julian Date (JD)}
-#'     \item{val}{Numeric magnitude value}
-#'     \item{valerr}{Numeric magnitude error (symmetric)}
-#'     \item{tstag}{Character timeseries tag identifying the photometric
-#'       band (e.g., \code{"FLUX_G"}, \code{"MAG_RP"}, \code{"MAG_BP"}).
-#'       Suffix determines color: \code{_G} -> darkgrey, \code{_RP} -> red,
-#'       \code{_BP} -> blue}
-#'   }
-#' @param periodSet A data frame containing period information with columns:
-#'   \describe{
-#'     \item{sourceid}{Numeric or character Gaia source identifier}
-#'     \item{period}{Numeric period value in days}
-#'   }
-#'
-#' @return A plotly object containing the combined subplot grid with
-#'   embedded JavaScript for shift+click maximization.
-#'
-#' @details
-#' \strong{Grid Layout:}
-#' The plot is organized as an N x 2 grid where N is the number of unique
-#' sources. The left column shows raw timeseries (JD vs. magnitude), and
-#' the right column shows phase-folded curves. Within each column, the
-#' x-axis is shared across all rows. Y-axes are reversed (brighter = up,
-#' standard astronomical convention).
-#'
-#' \strong{Color Mapping:}
-#' Photometric bands are color-coded by the \code{tstag} suffix:
-#' \itemize{
-#'   \item \code{_G} suffix: darkgrey (Gaia G-band)
-#'   \item \code{_RP} suffix: red (Gaia RP-band)
-#'   \item \code{_BP} suffix: blue (Gaia BP-band)
-#'   \item Other: black (fallback)
-#' }
-#'
-#' \strong{Folded Plot Annotations:}
-#' Each folded subplot includes:
-#' \itemize{
-#'   \item A dashed vertical line at phase = 1 separating the two periods
-#'   \item A period annotation in the upper-right corner
-#'   \item Source ID annotation above the plot
-#' }
-#'
-#' \strong{Shift+Click Maximize:}
-#' Clicking a data point while holding Shift opens a full-screen overlay
-#' showing the clicked trace at larger scale. The overlay can be dismissed
-#' via the close button, pressing ESC, or shift+clicking again. This feature
-#' requires \code{htmlwidgets::onRender} and only works in HTML output.
-#'
-#' \strong{Legend Behavior:}
-#' Only the first row of subplots displays legend entries to avoid
-#' duplication. The legend is placed horizontally below the plot.
-#'
-#' @examples
-#' \dontrun{
-#' # Create maximizable grid from timeseries data
-#' fig <- create_maximizable_plots(ts.all, g, periodSet)
-#' fig
-#'
-#' # Save as self-contained HTML
-#' htmlwidgets::saveWidget(fig, "timeseries_grid.html", selfcontained = TRUE)
-#' }
-#'
-#' @seealso \code{\link{create_simple_plots}} for a simpler alternative
-#'   without maximize functionality
-#'
-#' @importFrom plotly plot_ly add_trace layout subplot
-#' @importFrom htmlwidgets onRender
-#' @importFrom dplyr filter
-#'
-#' @export
-
-
 #' Create Maximizable Multi-Source Timeseries Grid with Auto-Height
 #'
 #' @param ts.all Timeseries data frame
@@ -104,6 +20,7 @@ library(dplyr)
 #'
 #' @return A plotly object with height set
 #' @export
+#'
 create_maximizable_plots <- function(ts.all,
                                      periodSet,
                                      plot_height = NULL,

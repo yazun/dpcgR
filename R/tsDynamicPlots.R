@@ -536,8 +536,8 @@ create_simple_plots <- function(ts.all, g, periodSet) {
   return(combined_plot)
 }
 
-get_folds <- function(fd) {
-  d = foldTimeseriesFull (fd$sourceid, fd$tstag, fd$period, fd$obstime, fd$val, fd$valerr,mean(fd$obstime))
+get_folds <- function(fd, refTime = 1666.43849021944516) {
+  d = foldTimeseriesFull (fd$sourceid, fd$tstag, fd$period, fd$obstime, fd$val, fd$valerr, refTime)
   return(d);
 }
 

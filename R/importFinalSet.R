@@ -105,6 +105,11 @@ import_final_selection <- function(con, sosSubName, isCSVBased, exportSQL = NULL
   if (isCSVBased) {
     # CSV import path: curl -> awk -> psql COPY pipeline
     # Build command as single line to avoid shell parsing issues
+    #
+    # Expected CSV format (with or without quotes):
+    # sourceid,eligibilityFlagPhot,eligibilityFlagRv
+    # 1234567890123456789,true,false
+    #
     cmd <- paste0(
       # Download CSV from OwnCloud WebDAV using netrc credentials
       # --noproxy bypasses proxy for internal host, --insecure skips cert validation
@@ -112,13 +117,20 @@ import_final_selection <- function(con, sosSubName, isCSVBased, exportSQL = NULL
       "'https://gaiaowncloud.isdc.unige.ch/remote.php/webdav/DRC4/FinalValidation/FinalRun/ExportSets/",
       sosSubName, ".csv' | ",
       # Transform CSV: skip header, inject module name, pass through or default eligibility flags
-      # - If field $3/$4 contains a value (true/false/t/f/1/0), pass it through
+      # - Handles double-quoted fields by stripping quotes with gsub
+      # - If field $2/$3 contains a value (true/false/t/f/1/0), pass it through
       # - If field is empty or missing, default to "false"
       "awk -F',' -v OFS=',' -v module='", sosSubName, "' '",
+      # Skip header row (case-insensitive check for sourceid)
       "NR==1 && tolower($0) ~ /sourceid/ { next } ",
       "NR>0 { ",
-      "  phot = ($3 != \"\" ? $3 : \"false\"); ",
-      "  rv = ($4 != \"\" ? $4 : \"false\"); ",
+      # Strip double quotes from all fields
+      "  gsub(/\"/, \"\", $1); ",
+      "  gsub(/\"/, \"\", $2); ",
+      "  gsub(/\"/, \"\", $3); ",
+      # Default empty fields to false
+      "  phot = ($2 != \"\" ? $2 : \"false\"); ",
+      "  rv = ($3 != \"\" ? $3 : \"false\"); ",
       "  print $1, module, phot, rv ",
       "}' | ",
       # Bulk-load via psql COPY directly from stdin

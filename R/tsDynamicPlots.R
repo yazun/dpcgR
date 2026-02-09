@@ -540,3 +540,162 @@ get_folds <- function(fd) {
   d = foldTimeseriesFull (fd$sourceid, fd$tstag, fd$period, fd$obstime, fd$val, fd$valerr,mean(fd$obstime))
   return(d);
 }
+
+
+
+
+
+# get period
+
+#' Generate R Markdown Chunks for Paginated Timeseries Plots
+#'
+#' Creates an R Markdown file containing individual code chunks for each page
+#' of timeseries plots. This approach is necessary because htmlwidgets (like
+#' plotly) cannot be reliably rendered in loops during R Markdown knitting -
+#' they get serialized as JSON text instead of interactive HTML widgets.
+#'
+#' By generating separate chunks, each widget is processed independently by
+#' knitr's htmlwidget output hooks, ensuring proper rendering.
+#'
+#' @param n_pages Integer specifying the total number of pages to generate.
+#'   Typically calculated as \code{ceiling(length(unique(ts.all$sourceid)) / sources_per_page)}.
+#' @param sources_per_page Integer specifying the maximum number of sources
+#'   to display per page. Default is 8. Recommended range: 5-10 for readability.
+#' @param height_per_source Numeric height in pixels allocated per source in
+#'   the plot. Default is 250. The total plot height for each page will be
+#'   approximately \code{n_sources_on_page * height_per_source}.
+#' @param output_file Character string specifying the output file path for
+#'   the generated R Markdown chunks. If \code{NULL} (default), creates
+#'   \code{ts_chunks_temp.Rmd} in the current working directory.
+#'
+#' @return Character string containing the path to the generated R Markdown
+#'   file. This file is intended to be included in a parent R Markdown
+#'   document using a child chunk.
+#'
+#' @details
+#' \strong{Why This Function Exists:}
+#' When rendering multiple plotly widgets in a loop during R Markdown knitting,
+#' the widgets are serialized as JSON/text instead of being rendered as
+#' interactive HTML. This is a known limitation of how knitr processes
+#' htmlwidgets in loops. The only reliable solution is to place each widget
+#' in its own code chunk.
+#'
+#' \strong{Generated Chunk Structure:}
+#' Each generated chunk:
+#' \enumerate{
+#'   \item Calculates the source IDs for that page using index slicing
+#'   \item Filters \code{ts.all} and \code{periodSet} to those sources
+#'   \item Calls \code{\link{create_maximizable_plots}} with the filtered data
+#'   \item Has \code{echo=FALSE, warning=FALSE, message=FALSE} options set
+#' }
+#'
+#' \strong{Required Variables in Parent Document:}
+#' The generated chunks assume the following variables exist in the
+#' R environment when the child document is knitted:
+#' \itemize{
+#'   \item \code{ts.all}: Data frame with timeseries data
+#'   \item \code{periodSet}: Data frame with period information
+#' }
+#'
+#' \strong{Usage Pattern:}
+#' \preformatted{
+#' # In your R Markdown document:
+#'
+#' ```
+#' {r generate_chunks}
+#' sourceids <- unique(ts.all$sourceid)
+#' sources_per_page <- 8
+#' n_pages <- ceiling(length(sourceids) / sources_per_page)
+#'
+#' ts_chunks_file <- brew_timeseries_chunks(
+#'   n_pages = n_pages,
+#'   sources_per_page = sources_per_page,
+#'   height_per_source = 250
+#' )
+#' ```
+#'
+#' ```
+#' {r child=ts_chunks_file}
+#' ```
+#' }
+#'
+#' @examples
+#' \dontrun{
+#' # Calculate pagination parameters
+#' sourceids <- unique(ts.all$sourceid)
+#' sources_per_page <- 8
+#' n_sources <- length(sourceids)
+#' n_pages <- ceiling(n_sources / sources_per_page)
+#'
+#' # Generate the child Rmd file
+#' ts_chunks_file <- brew_timeseries_chunks(
+#'   n_pages = n_pages,
+#'   sources_per_page = sources_per_page,
+#'   height_per_source = 250
+#' )
+#'
+#' # The file can then be included via child chunk:
+#' # ```{r child=ts_chunks_file}
+#' # ```
+#'
+#' # Or with custom output location
+#' ts_chunks_file <- brew_timeseries_chunks(
+#'   n_pages = 5,
+#'   sources_per_page = 10,
+#'   height_per_source = 200,
+#'   output_file = "output/timeseries_pages.Rmd"
+#' )
+#' }
+#'
+#' @seealso \code{\link{create_maximizable_plots}} for the underlying plot function,
+#'   \code{\link{brew_plot_chunks}} for a similar approach with static plots
+#'
+#' @export
+brew_timeseries_chunks <- function(n_pages,
+                                   sources_per_page,
+                                   height_per_source = 250,
+                                   output_file = NULL) {
+
+  # Create default output file in current working directory if not specified
+  if (is.null(output_file)) {
+    output_file <- file.path(getwd(), "ts_chunks_temp.Rmd")
+  }
+
+  # Remove existing file to ensure clean output
+  # Prevents appending to stale content from previous runs
+  if (file.exists(output_file)) file.remove(output_file)
+
+  # Store backtick character for building code fence syntax
+  # Using variable avoids escaping issues in string construction
+  bt <- "`"
+
+  # Generate one chunk per page
+  for (page in seq_len(n_pages)) {
+    # Calculate source index range for this page
+    start_idx <- (page - 1) * sources_per_page + 1
+    end_idx <- min(page * sources_per_page, n_pages * sources_per_page)
+
+    # Build the complete R Markdown chunk for this page
+    # Includes: level-2 header, code chunk with plot generation
+    # The chunk:
+    #   1. Extracts source IDs for this page via index slicing
+    #   2. Filters ts.all and periodSet to those sources
+    #   3. Calls create_maximizable_plots with height parameter
+    #   4. Includes guard for empty data (nrow check)
+    chunk <- paste0(
+      "\n## Page ", page, " of ", n_pages, "\n\n",
+      bt, bt, bt, "{r ts_page_", page, ", echo=FALSE, warning=FALSE, message=FALSE}\n",
+      "page_sids <- unique(ts.all$sourceid)[", start_idx, ":", end_idx, "]\n",
+      "ts_p <- ts.all %>% dplyr::filter(sourceid %in% page_sids)\n",
+      "per_p <- periodSet %>% dplyr::filter(sourceid %in% page_sids)\n",
+      "if(nrow(ts_p) > 0) create_maximizable_plots(ts_p, per_p, height_per_source = ", height_per_source, ")\n",
+      bt, bt, bt, "\n\n"
+    )
+
+    # Append chunk to output file
+    # Using append=TRUE allows sequential building of the document
+    cat(chunk, file = output_file, append = TRUE)
+  }
+
+  return(output_file)
+}

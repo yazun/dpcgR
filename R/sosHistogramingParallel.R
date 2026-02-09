@@ -488,7 +488,7 @@ build_table_histogram_query <- function(table_name, columns_df, global_stats, ru
   cte <- sprintf("WITH base AS (
  SELECT %s
  FROM %s
- WHERE %s = %d AND %s = %s
+ WHERE %s = %d and catalogid = getmaincatalog() AND %s = %s
 )",
                  col_list, from_clause, runid_ref, runid, sourceid_ref, sourceid_ref)
 

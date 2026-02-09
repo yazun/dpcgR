@@ -2,7 +2,7 @@
 #' @description
 #' Functions for generating histograms of numeric columns in PostgreSQL tables
 #' using parallel execution via partParalXZ4. The analysis is performed in two phases:
-#' 1. Compute global min/max statistics for all columns (single pass per table)
+#' 1. Compute global min/max statistics for all columns (parallel execution per table)
 #' 2. Execute parallel bucketing queries using fixed global boundaries
 #'
 #' @name histogram_analysis
@@ -74,10 +74,11 @@ get_histogram_columns <- function(conn, module) {
   dbGetQuery(conn, query)
 }
 
-#' Build Single-Pass Global Statistics Query
+#' Build Single-Pass Global Statistics Query for Parallel Execution
 #'
 #' Generates a SQL query that computes min, max, NaN count, and valid count
-#' for all numeric columns in a table in a single table scan.
+#' for all numeric columns in a table. The query includes a sourceid = sourceid
+#' construct to enable parallel execution via partParalXZ4.
 #'
 #' @param table_name Name of the table to query
 #' @param columns_df Data frame of columns (from get_histogram_columns)
@@ -98,10 +99,12 @@ build_global_stats_query <- function(table_name, columns_df, runid,
     from_clause <- sprintf("%s %s %s", table_name, table_alias, join_clause)
     col_prefix <- sprintf("%s.", table_alias)
     runid_ref <- sprintf("%s.runid", table_alias)
+    sourceid_ref <- sprintf("%s.sourceid", table_alias)
   } else {
     from_clause <- table_name
     col_prefix <- ""
     runid_ref <- "runid"
+    sourceid_ref <- "sourceid"
   }
 
   # Build SELECT expressions for ALL columns in a single pass
@@ -133,9 +136,45 @@ build_global_stats_query <- function(table_name, columns_df, runid,
     }
   })
 
-  query <- sprintf("SELECT %s\nFROM %s\nWHERE %s = %d",
+  # Include sourceid = sourceid construct for partParalXZ4 parallel execution
+  query <- sprintf("SELECT %s\nFROM %s\nWHERE %s = %d AND %s = %s",
                    paste(select_parts, collapse = ","),
-                   from_clause, runid_ref, runid)
+                   from_clause, runid_ref, runid, sourceid_ref, sourceid_ref)
+
+  return(query)
+}
+
+#' Build Aggregation Query for Partial Global Statistics
+#'
+#' Generates a SQL query to aggregate partial min/max/count results from
+#' parallel execution of global statistics queries.
+#'
+#' @param partial_table_name Name of the table containing partial results
+#' @param columns_df Data frame of columns (from get_histogram_columns)
+#' @param table_name Name of the source table (to filter columns_df)
+#' @return SQL query string
+#' @keywords internal
+build_global_stats_aggregation_query <- function(partial_table_name, columns_df, table_name) {
+
+  table_cols <- columns_df[columns_df$table_name == table_name, ]
+
+  # Build SELECT expressions that aggregate partial results
+  select_parts <- sapply(seq_len(nrow(table_cols)), function(i) {
+    col_name <- table_cols$column_name[i]
+    sprintf("
+   min(%s_min) AS %s_min,
+   max(%s_max) AS %s_max,
+   sum(%s_nan)::bigint AS %s_nan,
+   sum(%s_valid)::bigint AS %s_valid",
+            col_name, col_name,
+            col_name, col_name,
+            col_name, col_name,
+            col_name, col_name)
+  })
+
+  query <- sprintf("SELECT %s\nFROM %s",
+                   paste(select_parts, collapse = ","),
+                   partial_table_name)
 
   return(query)
 }
@@ -169,20 +208,31 @@ pivot_stats_to_long <- function(stats_wide, table_name, columns_df) {
   bind_rows(stats_long)
 }
 
-#' Compute Global Statistics for All Tables
+#' Compute Global Statistics for All Tables (Parallel Execution)
 #'
-#' Executes single-pass statistics queries for all tables in the module,
-#' computing global min/max and NaN counts for each numeric column.
+#' Executes statistics queries for all tables in the module using parallel
+#' execution via partParalXZ4, then aggregates partial results to compute
+#' global min/max and NaN counts for each numeric column.
 #'
 #' @param conn DBI database connection
 #' @param columns_df Data frame of columns (from get_histogram_columns)
 #' @param runid Run ID to filter data
 #' @param join_clauses Named list of table-specific JOIN clauses
 #' @param default_join_clause Default JOIN clause for tables not in join_clauses
+#' @param db_user Database user for parallel execution
+#' @param schema Output schema for temporary stats tables (default "dr4_ops_cs48_mv")
+#' @param slack_user Slack user for notifications (default "@nienarto")
+#' @param parallelism Number of parallel workers (default 80)
+#' @param num_chunks Number of data chunks (default 600)
+#' @param execute If TRUE, execute in parallel; if FALSE, run directly (default TRUE)
+#' @param debug If TRUE, print detailed debug output
 #' @return Data frame with global statistics for all columns
 #' @keywords internal
 compute_global_stats <- function(conn, columns_df, runid,
-                                 join_clauses = NULL, default_join_clause = NULL) {
+                                 join_clauses = NULL, default_join_clause = NULL,
+                                 db_user = NULL, schema = "dr4_ops_cs48_mv",
+                                 slack_user = "@nienarto", parallelism = 80,
+                                 num_chunks = 600, execute = TRUE, debug = FALSE) {
 
   if (nrow(columns_df) == 0) {
     stop("No columns found for histogram generation")
@@ -190,7 +240,7 @@ compute_global_stats <- function(conn, columns_df, runid,
 
   tables <- unique(columns_df$table_name)
 
-  cat(sprintf("Computing global stats for %d tables, %d columns (single pass per table)...\n",
+  cat(sprintf("Computing global stats for %d tables, %d columns (parallel execution)...\n",
               length(tables), nrow(columns_df)))
 
   all_stats <- list()
@@ -207,7 +257,57 @@ compute_global_stats <- function(conn, columns_df, runid,
     if (!is.null(query)) {
       n_cols <- sum(columns_df$table_name == tbl)
       cat(sprintf("  %s (%d columns)...\n", tbl, n_cols))
-      stats_wide <- dbGetQuery(conn, query)
+
+      if (execute && !is.null(db_user)) {
+        # Execute via parallel script
+        output_table <- sprintf("%s.stats_%s_%d", schema, sanitize_identifier(tbl, 50), runid)
+
+        if (debug) {
+          cat(sprintf("    Output table: %s\n", output_table))
+          cat(sprintf("    Query (first 500 chars): %s...\n", substr(query, 1, 500)))
+        }
+
+        exit_code <- execute_parallel_script(
+          runid = runid,
+          output_table = output_table,
+          sql_query = query,
+          db_user = db_user,
+          slack_user = slack_user,
+          parallelism = parallelism,
+          num_chunks = num_chunks,
+          description = sprintf("GlobalStats %s", tbl)
+        )
+
+        if (exit_code != 0) {
+          warning(sprintf("Parallel stats query for %s failed with exit code %d", tbl, exit_code))
+          next
+        }
+
+        # Aggregate partial results from parallel execution
+        agg_query <- build_global_stats_aggregation_query(output_table, columns_df, tbl)
+        if (debug) {
+          cat(sprintf("    Aggregation query: %s\n", agg_query))
+        }
+        stats_wide <- dbGetQuery(conn, agg_query)
+
+        # Drop the temporary partial results table
+        tryCatch({
+          dbExecute(conn, sprintf("DROP TABLE IF EXISTS %s", output_table))
+          if (debug) cat(sprintf("    Dropped temporary table: %s\n", output_table))
+        }, error = function(e) {
+          warning(sprintf("Could not drop temporary table %s: %s", output_table, e$message))
+        })
+
+      } else {
+        # Execute directly (non-parallel, for testing or small datasets)
+        # Remove the sourceid = sourceid clause for direct execution
+        direct_query <- gsub(" AND [a-z_]*\\.?sourceid = [a-z_]*\\.?sourceid", "", query)
+        if (debug) {
+          cat(sprintf("    Direct query (first 500 chars): %s...\n", substr(direct_query, 1, 500)))
+        }
+        stats_wide <- dbGetQuery(conn, direct_query)
+      }
+
       stats_long <- pivot_stats_to_long(stats_wide, tbl, columns_df)
       all_stats[[tbl]] <- stats_long
     }
@@ -686,7 +786,7 @@ compute_bucket_boundaries <- function(histogram_df, num_buckets = 20) {
 #' in two phases:
 #'
 #' 1. **Phase 1**: Compute global min/max statistics for all columns
-#'    (single table scan per table, not parallelized)
+#'    using parallel execution via partParalXZ4, then aggregate results
 #' 2. **Phase 2**: Execute parallel bucketing queries using fixed global
 #'    boundaries via partParalXZ4
 #'
@@ -778,14 +878,21 @@ run_histogram_analysis <- function(inparams, runid, module,
   cat(sprintf("Found %d columns across %d tables\n\n",
               nrow(columns_df), length(unique(columns_df$table_name))))
 
-  # PHASE 1: Compute global statistics (single pass per table)
-  cat("=== PHASE 1: Computing global statistics (single pass per table) ===\n")
+  # PHASE 1: Compute global statistics (parallel execution)
+  cat("=== PHASE 1: Computing global statistics (parallel execution) ===\n")
   global_stats <- compute_global_stats(
     conn = conn,
     columns_df = columns_df,
     runid = runid,
     join_clauses = join_clauses,
-    default_join_clause = default_join_clause
+    default_join_clause = default_join_clause,
+    db_user = inparams$dbUser,
+    schema = schema,
+    slack_user = slack_user,
+    parallelism = parallelism,
+    num_chunks = num_chunks,
+    execute = execute,
+    debug = debug
   )
   cat("\n")
 

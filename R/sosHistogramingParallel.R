@@ -137,7 +137,7 @@ build_global_stats_query <- function(table_name, columns_df, runid,
   })
 
   # Include sourceid = sourceid construct for partParalXZ4 parallel execution
-  query <- sprintf("SELECT %s\nFROM %s\nWHERE %s = %d AND %s = %s",
+  query <- sprintf("SELECT %s\nFROM %s\nWHERE %s = %d AND catalogid=getmaincatalog() AND %s = %s",
                    paste(select_parts, collapse = ","),
                    from_clause, runid_ref, runid, sourceid_ref, sourceid_ref)
 

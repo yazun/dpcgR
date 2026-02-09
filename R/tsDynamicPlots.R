@@ -658,7 +658,7 @@ brew_timeseries_chunks <- function(n_pages,
 
   # Create default output file in current working directory if not specified
   if (is.null(output_file)) {
-    output_file <- file.path(getwd(), "ts_chunks_temp.Rmd")
+    output_file <- file.path(tempdir(), "ts_chunks_temp.Rmd")
   }
 
   # Remove existing file to ensure clean output

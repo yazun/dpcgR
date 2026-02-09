@@ -374,7 +374,7 @@ brew_plotly_chunks <- function(plot_list,
   # Create temp file if no output specified
   if (is.null(output_file)) {
     output_file <- tempfile(
-      tmpdir = getwd(),
+      tmpdir = tempdir(),
       pattern = file_pattern,
       fileext = ".Rmd"
     )

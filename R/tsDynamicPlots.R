@@ -19,6 +19,9 @@ library(dplyr)
 #' @param height_per_source Height in pixels per source for auto-calculation. Default 250.
 #'
 #' @return A plotly object with height set
+#'
+#' @importFrom htmlwidgets onRender
+#'
 #' @export
 #'
 create_maximizable_plots <- function(ts.all,
@@ -160,8 +163,6 @@ create_maximizable_plots <- function(ts.all,
                     font = list(size = 14)),
       margin = list(l = 50, r = 50, t = 80, b = 120)
     )
-
-  # --- Attach JavaScript ---
   # --- Attach JavaScript for shift+click maximize AND synchronized legend ---
   main_plot <- main_plot %>%
     onRender("

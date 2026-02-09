@@ -1375,7 +1375,8 @@ run_classifier_analysis <- function(inparams, runid, sosname_conf,
 
   if (nrow(config) == 0) {
     DBI::dbDisconnect(conn)
-    stop("No configuration found")
+    cat("No configuration found")
+    return(NULL);
   }
 
   cat("Parsing type conditions...\n")

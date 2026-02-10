@@ -77,8 +77,8 @@ get_histogram_columns <- function(conn, module) {
 #' Build Single-Pass Global Statistics Query for Parallel Execution
 #'
 #' Generates a SQL query that computes min, max, NaN count, and valid count
-#' for all numeric columns in a table. The query includes a sourceid = sourceid
-#' construct to enable parallel execution via partParalXZ4.
+#' for all numeric columns in a table. Uses COALESCE to ensure non-NULL values
+#' are always returned (required for partParalXZ4 table creation).
 #'
 #' @param table_name Name of the table to query
 #' @param columns_df Data frame of columns (from get_histogram_columns)
@@ -108,27 +108,33 @@ build_global_stats_query <- function(table_name, columns_df, runid,
   }
 
   # Build SELECT expressions for ALL columns in a single pass
+  # Use COALESCE to ensure non-NULL values even when no data matches
+  # This prevents "null value violates not-null constraint" errors
+  # when partParalXZ4 creates the output table
   select_parts <- sapply(seq_len(nrow(table_cols)), function(i) {
     col <- table_cols[i, ]
     col_name <- col$column_name
     col_ref <- paste0(col_prefix, col_name)
 
     if (grepl("^float", col$udt_name)) {
+      # For float columns: filter out NaN and NULL, use COALESCE for empty results
+      # Use 'NaN'::float8 as default for min/max to indicate "no valid data"
       sprintf("
-   min(%s) FILTER (WHERE %s IS NOT NULL AND %s != 'NaN'::float8) AS %s_min,
-   max(%s) FILTER (WHERE %s IS NOT NULL AND %s != 'NaN'::float8) AS %s_max,
-   count(*) FILTER (WHERE %s = 'NaN'::float8) AS %s_nan,
-   count(*) FILTER (WHERE %s IS NOT NULL AND %s != 'NaN'::float8) AS %s_valid",
-              col_ref, col_ref, col_ref, col_name,
-              col_ref, col_ref, col_ref, col_name,
+   COALESCE(min(%s) FILTER (WHERE %s IS NOT NULL AND %s != 'NaN'::float8 AND %s != 'Infinity'::float8 AND %s != '-Infinity'::float8), 'NaN'::float8) AS %s_min,
+   COALESCE(max(%s) FILTER (WHERE %s IS NOT NULL AND %s != 'NaN'::float8 AND %s != 'Infinity'::float8 AND %s != '-Infinity'::float8), 'NaN'::float8) AS %s_max,
+   COALESCE(count(*) FILTER (WHERE %s = 'NaN'::float8), 0) AS %s_nan,
+   COALESCE(count(*) FILTER (WHERE %s IS NOT NULL AND %s != 'NaN'::float8 AND %s != 'Infinity'::float8 AND %s != '-Infinity'::float8), 0) AS %s_valid",
+              col_ref, col_ref, col_ref, col_ref, col_ref, col_name,
+              col_ref, col_ref, col_ref, col_ref, col_ref, col_name,
               col_ref, col_name,
-              col_ref, col_ref, col_name)
+              col_ref, col_ref, col_ref, col_ref, col_name)
     } else {
+      # For integer columns: no NaN possible, just filter NULL
       sprintf("
-   min(%s) AS %s_min,
-   max(%s) AS %s_max,
+   COALESCE(min(%s), 0) AS %s_min,
+   COALESCE(max(%s), 0) AS %s_max,
    0::bigint AS %s_nan,
-   count(*) FILTER (WHERE %s IS NOT NULL) AS %s_valid",
+   COALESCE(count(*) FILTER (WHERE %s IS NOT NULL), 0) AS %s_valid",
               col_ref, col_name,
               col_ref, col_name,
               col_name,
@@ -143,22 +149,10 @@ build_global_stats_query <- function(table_name, columns_df, runid,
 
   return(query)
 }
-
 #' Build Aggregation Query for Partial Global Statistics
 #'
 #' Generates a SQL query to aggregate partial min/max/count results from
-#' parallel execution of global statistics queries.
-#'
-#' @param partial_table_name Name of the table containing partial results
-#' @param columns_df Data frame of columns (from get_histogram_columns)
-#' @param table_name Name of the source table (to filter columns_df)
-#' @return SQL query string
-#' @keywords internal
-#' Build Aggregation Query for Partial Global Statistics
-#'
-#' Generates a SQL query to aggregate partial min/max/count results from
-#' parallel execution of global statistics queries. Filters out Inf and NaN
-#' values to prevent corrupted boundaries.
+#' parallel execution. Filters out NaN placeholder values used for empty chunks.
 #'
 #' @param partial_table_name Name of the table containing partial results
 #' @param columns_df Data frame of columns (from get_histogram_columns)
@@ -170,16 +164,16 @@ build_global_stats_aggregation_query <- function(partial_table_name, columns_df,
   table_cols <- columns_df[columns_df$table_name == table_name, ]
 
   # Build SELECT expressions that aggregate partial results
-  # Filter out Inf, -Inf, and NaN values in the aggregation
+  # Filter out NaN values (used as placeholders for empty chunks)
   select_parts <- sapply(seq_len(nrow(table_cols)), function(i) {
     col_name <- table_cols$column_name[i]
     sprintf("
-   min(CASE WHEN %s_min != 'Infinity'::float8 AND %s_min != '-Infinity'::float8 AND %s_min != 'NaN'::float8 THEN %s_min END) AS %s_min,
-   max(CASE WHEN %s_max != 'Infinity'::float8 AND %s_max != '-Infinity'::float8 AND %s_max != 'NaN'::float8 THEN %s_max END) AS %s_max,
-   COALESCE(sum(%s_nan)::bigint, 0) AS %s_nan,
-   COALESCE(sum(%s_valid)::bigint, 0) AS %s_valid",
-            col_name, col_name, col_name, col_name, col_name,
-            col_name, col_name, col_name, col_name, col_name,
+   min(NULLIF(%s_min, 'NaN'::float8)) AS %s_min,
+   max(NULLIF(%s_max, 'NaN'::float8)) AS %s_max,
+   COALESCE(sum(%s_nan), 0)::bigint AS %s_nan,
+   COALESCE(sum(%s_valid), 0)::bigint AS %s_valid",
+            col_name, col_name,
+            col_name, col_name,
             col_name, col_name,
             col_name, col_name)
   })

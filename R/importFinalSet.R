@@ -132,6 +132,8 @@ import_final_selection <- function(con, sosSubName, isCSVBased, exportSQL = NULL
     # Log truncated command for debugging (full command may contain sensitive paths)
     message("Executing: ", substr(cmd, 1, 200), "...")
     result <- system(cmd, intern = TRUE, ignore.stderr = FALSE)
+
+    rows <- dbExecute(con, "analyze dr4_ops_cs48_mv.dr4_final_run_selection")
     message(sprintf("CSV import completed for %s", sosSubName))
     if (length(result) > 0) message(paste(result, collapse = "\n"))
 
@@ -148,12 +150,10 @@ import_final_selection <- function(con, sosSubName, isCSVBased, exportSQL = NULL
         COALESCE(eligibilityFlagRv, false)
       FROM (%s) AS subq
     ", sosSubName, exportSQL)
-
+    rows <- dbExecute(con, "select setdpcganalyticsbase()")
     rows <- dbExecute(con, sql)
-    # Run ANALYZE to update table statistics after bulk insert
-    # Ensures the query planner has accurate cardinality estimates
-    rows <- dbExecute(con, "analyze dr4_ops_cs48_mv.dr4_final_run_selection")
     message(sprintf("SQL import completed for %s: %d rows", sosSubName, rows))
+    rows <- dbExecute(con, "analyze dr4_ops_cs48_mv.dr4_final_run_selection")
 
   } else {
     # Neither import method was properly configured

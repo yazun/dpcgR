@@ -153,7 +153,7 @@ import_final_selection <- function(con, sosSubName, isCSVBased, exportSQL = NULL
     rows <- dbExecute(con, "select setdpcganalyticsbase()")
     rows <- dbExecute(con, sql)
     message(sprintf("SQL import completed for %s: %d rows", sosSubName, rows))
-    rows <- dbExecute(con, "analyze dr4_ops_cs48_mv.dr4_final_run_selection")
+    rows <- dbExecute(con, "vacuum (freeze,analyze) dr4_ops_cs48_mv.dr4_final_run_selection")
 
   } else {
     # Neither import method was properly configured

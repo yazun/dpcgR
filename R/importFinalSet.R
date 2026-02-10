@@ -143,7 +143,7 @@ import_final_selection <- function(con, sosSubName, isCSVBased, exportSQL = NULL
       INSERT INTO dr4_ops_cs48_mv.dr4_final_run_selection (sourceid, module, eligibilityFlagPhot, eligibilityFlagRv)
       SELECT
         sourceid,
-        '%s'::text,
+        '%s',
         COALESCE(eligibilityFlagPhot, false),
         COALESCE(eligibilityFlagRv, false)
       FROM (%s) AS subq

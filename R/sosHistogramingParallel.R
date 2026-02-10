@@ -154,20 +154,32 @@ build_global_stats_query <- function(table_name, columns_df, runid,
 #' @param table_name Name of the source table (to filter columns_df)
 #' @return SQL query string
 #' @keywords internal
+#' Build Aggregation Query for Partial Global Statistics
+#'
+#' Generates a SQL query to aggregate partial min/max/count results from
+#' parallel execution of global statistics queries. Filters out Inf and NaN
+#' values to prevent corrupted boundaries.
+#'
+#' @param partial_table_name Name of the table containing partial results
+#' @param columns_df Data frame of columns (from get_histogram_columns)
+#' @param table_name Name of the source table (to filter columns_df)
+#' @return SQL query string
+#' @keywords internal
 build_global_stats_aggregation_query <- function(partial_table_name, columns_df, table_name) {
 
   table_cols <- columns_df[columns_df$table_name == table_name, ]
 
   # Build SELECT expressions that aggregate partial results
+  # Filter out Inf, -Inf, and NaN values in the aggregation
   select_parts <- sapply(seq_len(nrow(table_cols)), function(i) {
     col_name <- table_cols$column_name[i]
     sprintf("
-   min(%s_min) AS %s_min,
-   max(%s_max) AS %s_max,
-   sum(%s_nan)::bigint AS %s_nan,
-   sum(%s_valid)::bigint AS %s_valid",
-            col_name, col_name,
-            col_name, col_name,
+   min(CASE WHEN %s_min != 'Infinity'::float8 AND %s_min != '-Infinity'::float8 AND %s_min != 'NaN'::float8 THEN %s_min END) AS %s_min,
+   max(CASE WHEN %s_max != 'Infinity'::float8 AND %s_max != '-Infinity'::float8 AND %s_max != 'NaN'::float8 THEN %s_max END) AS %s_max,
+   COALESCE(sum(%s_nan)::bigint, 0) AS %s_nan,
+   COALESCE(sum(%s_valid)::bigint, 0) AS %s_valid",
+            col_name, col_name, col_name, col_name, col_name,
+            col_name, col_name, col_name, col_name, col_name,
             col_name, col_name,
             col_name, col_name)
   })
@@ -189,18 +201,45 @@ build_global_stats_aggregation_query <- function(partial_table_name, columns_df,
 #' @param columns_df Data frame of columns (from get_histogram_columns)
 #' @return Data frame with columns: table_name, column_name, global_min, global_max, nan_count, non_nan_count
 #' @keywords internal
+#' Pivot Wide Statistics Result to Long Format
+#'
+#' Converts the wide-format result from build_global_stats_query (one row with
+#' columns like col1_min, col1_max, col2_min, ...) to long format (one row per column).
+#' Sanitizes Inf, -Inf, and NaN values to prevent downstream issues.
+#'
+#' @param stats_wide Wide-format data frame from database query
+#' @param table_name Name of the source table
+#' @param columns_df Data frame of columns (from get_histogram_columns)
+#' @return Data frame with columns: table_name, column_name, global_min, global_max, nan_count, non_nan_count
+#' @keywords internal
 pivot_stats_to_long <- function(stats_wide, table_name, columns_df) {
   table_cols <- columns_df[columns_df$table_name == table_name, ]
 
+  # Helper to sanitize numeric values: replace Inf/-Inf/NaN with NA
+
+  sanitize_value <- function(x, default = NA_real_) {
+    x <- as.numeric(x)
+    if (is.null(x) || length(x) == 0 || is.na(x) || is.nan(x) || is.infinite(x)) {
+      return(default)
+    }
+    return(x)
+  }
+
   stats_long <- lapply(seq_len(nrow(table_cols)), function(i) {
     col_name <- table_cols$column_name[i]
+
+    raw_min <- stats_wide[[paste0(col_name, "_min")]]
+    raw_max <- stats_wide[[paste0(col_name, "_max")]]
+    raw_nan <- stats_wide[[paste0(col_name, "_nan")]]
+    raw_valid <- stats_wide[[paste0(col_name, "_valid")]]
+
     data.frame(
       table_name = table_name,
       column_name = col_name,
-      global_min = as.numeric(stats_wide[[paste0(col_name, "_min")]]),
-      global_max = as.numeric(stats_wide[[paste0(col_name, "_max")]]),
-      nan_count = as.numeric(stats_wide[[paste0(col_name, "_nan")]]),
-      non_nan_count = as.numeric(stats_wide[[paste0(col_name, "_valid")]]),
+      global_min = sanitize_value(raw_min),
+      global_max = sanitize_value(raw_max),
+      nan_count = sanitize_value(raw_nan, default = 0),
+      non_nan_count = sanitize_value(raw_valid, default = 0),
       stringsAsFactors = FALSE
     )
   })
@@ -339,11 +378,25 @@ build_column_bucket_select <- function(column_name, udt_name, global_min, global
                                        nan_count, non_nan_count, num_buckets,
                                        col_ref, table_name) {
 
-  nan_count <- as.integer(nan_count)
-  non_nan_count <- as.integer(non_nan_count)
+  # Sanitize inputs
+  nan_count <- as.integer(ifelse(is.na(nan_count) | is.nan(nan_count), 0, nan_count))
+  non_nan_count <- as.integer(ifelse(is.na(non_nan_count) | is.nan(non_nan_count), 0, non_nan_count))
+
+  # Check for invalid min/max - this should not happen if build_histogram_scripts filters properly
+  # but add as safety net
+  if (is.na(global_min) || is.na(global_max) ||
+      is.infinite(global_min) || is.infinite(global_max) ||
+      is.nan(global_min) || is.nan(global_max)) {
+    warning(sprintf("Invalid stats for column %s: min=%s, max=%s - using fallback",
+                    column_name, global_min, global_max))
+    global_min <- 0
+    global_max <- 1
+  }
 
   # Handle edge case: all values are the same (or all NULL/NaN)
-  if (is.na(global_min) || is.na(global_max) || global_min >= global_max) {
+  if (global_min >= global_max) {
+
+
     safe_min <- ifelse(is.na(global_min), 0, global_min)
     safe_max <- ifelse(is.na(global_max), 0, global_max)
 
@@ -611,6 +664,20 @@ execute_parallel_script <- function(runid, output_table, sql_query, db_user,
 #' @param default_join_clause Default JOIN clause for tables not in join_clauses
 #' @return Named list of script info, one entry per table
 #' @keywords internal
+#' Build Histogram Scripts for All Tables
+#'
+#' Prepares histogram queries and metadata for all tables in the module.
+#' Skips columns with invalid global statistics (NA, Inf, or min >= max).
+#'
+#' @param columns_df Data frame of columns (from get_histogram_columns)
+#' @param global_stats Data frame of global statistics (from compute_global_stats)
+#' @param runid Run ID to filter data
+#' @param schema Output schema for histogram tables (default "dr4_ops_cs48_mv")
+#' @param num_buckets Number of histogram buckets (default 20)
+#' @param join_clauses Named list of table-specific JOIN clauses
+#' @param default_join_clause Default JOIN clause for tables not in join_clauses
+#' @return Named list of script info, one entry per table
+#' @keywords internal
 build_histogram_scripts <- function(columns_df, global_stats, runid,
                                     schema = "dr4_ops_cs48_mv",
                                     num_buckets = 20,
@@ -621,9 +688,35 @@ build_histogram_scripts <- function(columns_df, global_stats, runid,
 
   cat(sprintf("Building histogram queries for %d tables...\n", length(tables)))
 
+  # Filter out columns with invalid stats before building queries
+  valid_stats <- global_stats %>%
+    filter(
+      !is.na(global_min) & !is.na(global_max) &
+        !is.infinite(global_min) & !is.infinite(global_max) &
+        !is.nan(global_min) & !is.nan(global_max) &
+        global_min < global_max &
+        non_nan_count > 0
+    )
+
+  skipped_cols <- nrow(global_stats) - nrow(valid_stats)
+  if (skipped_cols > 0) {
+    cat(sprintf("  Skipping %d columns with invalid stats (Inf/NaN/empty)\n", skipped_cols))
+  }
+
+  # Filter columns_df to only include columns with valid stats
+  valid_columns_df <- columns_df %>%
+    semi_join(valid_stats, by = c("table_name", "column_name"))
+
   scripts <- list()
 
   for (tbl in tables) {
+    tbl_cols <- valid_columns_df %>% filter(table_name == tbl)
+
+    if (nrow(tbl_cols) == 0) {
+      cat(sprintf("  %s: No valid columns, skipping\n", tbl))
+      next
+    }
+
     if (!is.null(join_clauses) && tbl %in% names(join_clauses)) {
       join_clause <- join_clauses[[tbl]]
     } else {
@@ -632,8 +725,8 @@ build_histogram_scripts <- function(columns_df, global_stats, runid,
 
     sql_query <- build_table_histogram_query(
       table_name = tbl,
-      columns_df = columns_df,
-      global_stats = global_stats,
+      columns_df = valid_columns_df,
+      global_stats = valid_stats,
       runid = runid,
       num_buckets = num_buckets,
       join_clause = join_clause
@@ -642,7 +735,7 @@ build_histogram_scripts <- function(columns_df, global_stats, runid,
     if (is.null(sql_query)) next
 
     output_table <- sprintf("%s.hist_%s_%d", schema, sanitize_identifier(tbl, 50), runid)
-    n_cols <- sum(columns_df$table_name == tbl)
+    n_cols <- nrow(tbl_cols)
 
     scripts[[tbl]] <- list(
       sql_query = sql_query,
@@ -653,7 +746,7 @@ build_histogram_scripts <- function(columns_df, global_stats, runid,
       aggregation_query = build_histogram_aggregation_query(output_table)
     )
 
-    cat(sprintf("  %s: %d columns -> %s\n", tbl, n_cols, output_table))
+    cat(sprintf("  %s: %d valid columns -> %s\n", tbl, n_cols, output_table))
   }
 
   return(scripts)

@@ -633,7 +633,7 @@ execute_parallel_script <- function(runid, output_table, sql_query, db_user,
   writeLines(sprintf("---\n\n%s\n\n---", sql_query), query_file)
 
   # Build command that pipes query file to partParalXZ4
-  cmd <- sprintf("cat '%s' | partParalXZ4 %d %s %s %s %d false private cu7_classification '%s' %d",
+  cmd <- sprintf("cat '%s' | partParalXZ4 %d %s %s %s %d false private dpcg-dex '%s' %d",
                  query_file, runid, output_table, db_user, slack_user,
                  parallelism, description, num_chunks)
 

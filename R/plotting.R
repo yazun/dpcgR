@@ -372,7 +372,7 @@ plotCmdAndHR <- function(inData, valueName, catalogName = NULL, palette = "plasm
   sizer = case_when(nrow(wantedData ) < 20000 ~ 1.5,
                     nrow(wantedData ) < 50000 ~ 1,
                     nrow(wantedData ) < 100000 ~ .75,
-                    TRUE ~ .5)
+                    TRUE ~ .9)
 
 
   pCM = ggplot() +
@@ -387,6 +387,7 @@ plotCmdAndHR <- function(inData, valueName, catalogName = NULL, palette = "plasm
     # geom_point(data = wantedData, aes(x = median_bp_minus_median_rp, y =  fmedian_g), shape=16, alpha = .5, colour = pcolour) +
     geom_pointdensity(data = wantedData, aes(x = median_bp_minus_median_rp, y =  fmedian_g), shape=16, alpha = .5, size = sizer,
                       adjust = adjusting,
+                      method = "kde2d", kde2d.n = 400,
                       show.legend = FALSE) +
     scale_colour_viridis_c(option = palette) +
     # stat_density_2d(data = wantedData, aes(x = median_bp_minus_median_rp, y =  fmedian_g, fill = ..density..), geom = "raster", contour = FALSE) +

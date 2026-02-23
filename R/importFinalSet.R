@@ -263,7 +263,7 @@ import_final_selection <- function(con, sosSubName, isCSVBased, exportSQL = NULL
       "}' | ",
       "psql ", psql_conn, " ",
       "-c \"COPY dr4_ops_cs48_mv.dr4_final_run_selection_exceptions(",
-      "sourceid, module, source_sos_name, destination_sos_name, optional_comment",
+      "sourceid, module, source_module, dest_module, comments",
       ") FROM STDIN WITH CSV\""
     )
 

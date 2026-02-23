@@ -258,7 +258,7 @@ import_final_selection <- function(con, sosSubName, isCSVBased, exportSQL = NULL
       "{ ",
       "  gsub(/\\r/, \"\"); ",
       "  for (i=1; i<=NF; i++) gsub(/\042/, \"\", $i); ",
-      "  dest    = ($3 != \"\" ? $3 : \"EJECT\"); ",
+      "  dest    = ($3 != \"\" ? $3 : \"eject\"); ",
       "  comment = ($4 != \"\" ? $4 : \"\"); ",
       "  print $1, module, $2, dest, comment ",
       "}' | ",

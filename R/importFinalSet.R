@@ -260,7 +260,7 @@ import_final_selection <- function(con, sosSubName, isCSVBased, exportSQL = NULL
       "  for (i=1; i<=NF; i++) gsub(/\042/, \"\", $i); ",
       "  dest    = ($3 != \"\" ? $3 : \"EJECT\"); ",
       "  comment = ($4 != \"\" ? $4 : \"\"); ",
-      "  print $1, module, $2, $3, comment ",
+      "  print $1, module, $2, dest, comment ",
       "}' | ",
       "psql ", psql_conn, " ",
       "-c \"COPY dr4_ops_cs48_mv.dr4_final_run_selection_exceptions(",

@@ -117,26 +117,30 @@ build_global_stats_query <- function(table_name, columns_df, runid,
     col_ref <- paste0(col_prefix, col_name)
 
     if (grepl("^float", col$udt_name)) {
-      # For float columns: filter out NaN and NULL, use COALESCE for empty results
+      # For float columns: filter out NaN, Inf, and NULL, use COALESCE for empty results
       # Use 'NaN'::float8 as default for min/max to indicate "no valid data"
       sprintf("
    COALESCE(min(%s) FILTER (WHERE %s IS NOT NULL AND %s != 'NaN'::float8 AND %s != 'Infinity'::float8 AND %s != '-Infinity'::float8), 'NaN'::float8) AS %s_min,
    COALESCE(max(%s) FILTER (WHERE %s IS NOT NULL AND %s != 'NaN'::float8 AND %s != 'Infinity'::float8 AND %s != '-Infinity'::float8), 'NaN'::float8) AS %s_max,
    COALESCE(count(*) FILTER (WHERE %s = 'NaN'::float8), 0) AS %s_nan,
+   COALESCE(count(*) FILTER (WHERE %s = 'Infinity'::float8 OR %s = '-Infinity'::float8), 0) AS %s_inf,
    COALESCE(count(*) FILTER (WHERE %s IS NOT NULL AND %s != 'NaN'::float8 AND %s != 'Infinity'::float8 AND %s != '-Infinity'::float8), 0) AS %s_valid",
               col_ref, col_ref, col_ref, col_ref, col_ref, col_name,
               col_ref, col_ref, col_ref, col_ref, col_ref, col_name,
               col_ref, col_name,
+              col_ref, col_ref, col_name,
               col_ref, col_ref, col_ref, col_ref, col_name)
     } else {
-      # For integer columns: no NaN possible, just filter NULL
+      # For integer columns: no NaN or Inf possible, just filter NULL
       sprintf("
    COALESCE(min(%s), 0) AS %s_min,
    COALESCE(max(%s), 0) AS %s_max,
    0::bigint AS %s_nan,
+   0::bigint AS %s_inf,
    COALESCE(count(*) FILTER (WHERE %s IS NOT NULL), 0) AS %s_valid",
               col_ref, col_name,
               col_ref, col_name,
+              col_name,
               col_name,
               col_ref, col_name)
     }
@@ -171,7 +175,9 @@ build_global_stats_aggregation_query <- function(partial_table_name, columns_df,
    min(NULLIF(%s_min, 'NaN'::float8)) AS %s_min,
    max(NULLIF(%s_max, 'NaN'::float8)) AS %s_max,
    COALESCE(sum(%s_nan), 0)::bigint AS %s_nan,
+   COALESCE(sum(%s_inf), 0)::bigint AS %s_inf,
    COALESCE(sum(%s_valid), 0)::bigint AS %s_valid",
+            col_name, col_name,
             col_name, col_name,
             col_name, col_name,
             col_name, col_name,
@@ -189,22 +195,12 @@ build_global_stats_aggregation_query <- function(partial_table_name, columns_df,
 #'
 #' Converts the wide-format result from build_global_stats_query (one row with
 #' columns like col1_min, col1_max, col2_min, ...) to long format (one row per column).
-#'
-#' @param stats_wide Wide-format data frame from database query
-#' @param table_name Name of the source table
-#' @param columns_df Data frame of columns (from get_histogram_columns)
-#' @return Data frame with columns: table_name, column_name, global_min, global_max, nan_count, non_nan_count
-#' @keywords internal
-#' Pivot Wide Statistics Result to Long Format
-#'
-#' Converts the wide-format result from build_global_stats_query (one row with
-#' columns like col1_min, col1_max, col2_min, ...) to long format (one row per column).
 #' Sanitizes Inf, -Inf, and NaN values to prevent downstream issues.
 #'
 #' @param stats_wide Wide-format data frame from database query
 #' @param table_name Name of the source table
 #' @param columns_df Data frame of columns (from get_histogram_columns)
-#' @return Data frame with columns: table_name, column_name, global_min, global_max, nan_count, non_nan_count
+#' @return Data frame with columns: table_name, column_name, global_min, global_max, nan_count, inf_count, non_nan_count
 #' @keywords internal
 pivot_stats_to_long <- function(stats_wide, table_name, columns_df) {
   table_cols <- columns_df[columns_df$table_name == table_name, ]
@@ -225,6 +221,7 @@ pivot_stats_to_long <- function(stats_wide, table_name, columns_df) {
     raw_min <- stats_wide[[paste0(col_name, "_min")]]
     raw_max <- stats_wide[[paste0(col_name, "_max")]]
     raw_nan <- stats_wide[[paste0(col_name, "_nan")]]
+    raw_inf <- stats_wide[[paste0(col_name, "_inf")]]
     raw_valid <- stats_wide[[paste0(col_name, "_valid")]]
 
     data.frame(
@@ -233,6 +230,7 @@ pivot_stats_to_long <- function(stats_wide, table_name, columns_df) {
       global_min = sanitize_value(raw_min),
       global_max = sanitize_value(raw_max),
       nan_count = sanitize_value(raw_nan, default = 0),
+      inf_count = sanitize_value(raw_inf, default = 0),
       non_nan_count = sanitize_value(raw_valid, default = 0),
       stringsAsFactors = FALSE
     )
@@ -356,28 +354,35 @@ compute_global_stats <- function(conn, columns_df, runid,
 #'
 #' Generates a SELECT statement for computing histogram buckets for a single column,
 #' using precomputed global min/max boundaries. Used as part of UNION ALL query.
+#' For float columns, filters out NaN and Inf values to prevent NUMERIC cast errors.
+#' For integer columns, caps the bucket count at the distinct value range and uses
+#' half-integer boundaries so each integer falls cleanly into one bucket.
 #'
 #' @param column_name Name of the column
 #' @param udt_name PostgreSQL data type (float8, int4, etc.)
 #' @param global_min Precomputed global minimum value
 #' @param global_max Precomputed global maximum value
 #' @param nan_count Precomputed count of NaN values
-#' @param non_nan_count Precomputed count of non-NaN values
+#' @param inf_count Precomputed count of Inf/-Inf values
+#' @param non_nan_count Precomputed count of valid (non-NaN, non-Inf) values
 #' @param num_buckets Number of histogram buckets
 #' @param col_ref Column reference (may include table alias prefix)
 #' @param table_name Name of the source table
 #' @return SQL SELECT statement string
 #' @keywords internal
 build_column_bucket_select <- function(column_name, udt_name, global_min, global_max,
-                                       nan_count, non_nan_count, num_buckets,
+                                       nan_count, inf_count, non_nan_count, num_buckets,
                                        col_ref, table_name) {
 
   # Sanitize inputs
   nan_count <- as.integer(ifelse(is.na(nan_count) | is.nan(nan_count), 0, nan_count))
+  inf_count <- as.integer(ifelse(is.na(inf_count) | is.nan(inf_count), 0, inf_count))
   non_nan_count <- as.integer(ifelse(is.na(non_nan_count) | is.nan(non_nan_count), 0, non_nan_count))
 
-  # Check for invalid min/max - this should not happen if build_histogram_scripts filters properly
-  # but add as safety net
+  is_float <- grepl("^float", udt_name)
+  is_int <- grepl("^int", udt_name)
+
+  # Check for invalid min/max - safety net
   if (is.na(global_min) || is.na(global_max) ||
       is.infinite(global_min) || is.infinite(global_max) ||
       is.nan(global_min) || is.nan(global_max)) {
@@ -387,15 +392,35 @@ build_column_bucket_select <- function(column_name, udt_name, global_min, global
     global_max <- 1
   }
 
+  # For integer columns: cap buckets at distinct value range, use half-integer boundaries
+  if (is_int) {
+    int_range <- as.numeric(global_max) - as.numeric(global_min) + 1
+    effective_buckets <- min(num_buckets, int_range)
+    # Use half-integer boundaries so each integer falls cleanly into a bucket
+    bucket_lo <- as.numeric(global_min) - 0.5
+    bucket_hi <- as.numeric(global_max) + 0.5
+  } else {
+    effective_buckets <- num_buckets
+    bucket_lo <- global_min
+    bucket_hi <- global_max
+  }
+
+  # WHERE clause depends on column type
+  if (is_float) {
+    where_filter <- sprintf(
+      "%s IS NOT NULL AND %s != 'NaN'::float8 AND %s != 'Infinity'::float8 AND %s != '-Infinity'::float8",
+      col_ref, col_ref, col_ref, col_ref)
+  } else {
+    where_filter <- sprintf("%s IS NOT NULL", col_ref)
+  }
+
   # Handle edge case: all values are the same (or all NULL/NaN)
   if (global_min >= global_max) {
-
 
     safe_min <- ifelse(is.na(global_min), 0, global_min)
     safe_max <- ifelse(is.na(global_max), 0, global_max)
 
-    if (grepl("^float", udt_name)) {
-      select_expr <- sprintf("
+    select_expr <- sprintf("
  SELECT
    '%s'::TEXT AS column_name,
    1 AS bucket,
@@ -406,39 +431,18 @@ build_column_bucket_select <- function(column_name, udt_name, global_min, global
    %.17g::NUMERIC AS global_min,
    %.17g::NUMERIC AS global_max,
    %d::BIGINT AS nan_count,
+   %d::BIGINT AS inf_count,
    %d::BIGINT AS non_nan_count
  FROM base
- WHERE %s IS NOT NULL AND %s != 'NaN'::float8",
-                             column_name,
-                             col_ref, col_ref, col_ref,
-                             safe_min, safe_max,
-                             nan_count, non_nan_count,
-                             col_ref, col_ref)
-    } else {
-      select_expr <- sprintf("
- SELECT
-   '%s'::TEXT AS column_name,
-   1 AS bucket,
-   count(*)::BIGINT AS freq,
-   min(%s)::NUMERIC AS bucket_min,
-   max(%s)::NUMERIC AS bucket_max,
-   avg(%s)::NUMERIC AS bucket_avg,
-   %.17g::NUMERIC AS global_min,
-   %.17g::NUMERIC AS global_max,
-   0::BIGINT AS nan_count,
-   %d::BIGINT AS non_nan_count
- FROM base
- WHERE %s IS NOT NULL",
-                             column_name,
-                             col_ref, col_ref, col_ref,
-                             safe_min, safe_max,
-                             non_nan_count,
-                             col_ref)
-    }
+ WHERE %s",
+                           column_name,
+                           col_ref, col_ref, col_ref,
+                           safe_min, safe_max,
+                           nan_count, inf_count, non_nan_count,
+                           where_filter)
   } else {
     # Normal case: use width_bucket with fixed boundaries
-    if (grepl("^float", udt_name)) {
-      select_expr <- sprintf("
+    select_expr <- sprintf("
  SELECT
    '%s'::TEXT AS column_name,
    width_bucket(%s, %.17g::float8, %.17g::float8, %d) AS bucket,
@@ -449,41 +453,18 @@ build_column_bucket_select <- function(column_name, udt_name, global_min, global
    %.17g::NUMERIC AS global_min,
    %.17g::NUMERIC AS global_max,
    %d::BIGINT AS nan_count,
+   %d::BIGINT AS inf_count,
    %d::BIGINT AS non_nan_count
  FROM base
- WHERE %s IS NOT NULL AND %s != 'NaN'::float8
+ WHERE %s
  GROUP BY width_bucket(%s, %.17g::float8, %.17g::float8, %d)",
-                             column_name,
-                             col_ref, global_min, global_max, num_buckets,
-                             col_ref, col_ref, col_ref,
-                             global_min, global_max,
-                             nan_count, non_nan_count,
-                             col_ref, col_ref,
-                             col_ref, global_min, global_max, num_buckets)
-    } else {
-      select_expr <- sprintf("
- SELECT
-   '%s'::TEXT AS column_name,
-   width_bucket(%s, %.17g::float8, %.17g::float8, %d) AS bucket,
-   count(*)::BIGINT AS freq,
-   min(%s)::NUMERIC AS bucket_min,
-   max(%s)::NUMERIC AS bucket_max,
-   avg(%s)::NUMERIC AS bucket_avg,
-   %.17g::NUMERIC AS global_min,
-   %.17g::NUMERIC AS global_max,
-   0::BIGINT AS nan_count,
-   %d::BIGINT AS non_nan_count
- FROM base
- WHERE %s IS NOT NULL
- GROUP BY width_bucket(%s, %.17g::float8, %.17g::float8, %d)",
-                             column_name,
-                             col_ref, global_min, global_max, num_buckets,
-                             col_ref, col_ref, col_ref,
-                             global_min, global_max,
-                             non_nan_count,
-                             col_ref,
-                             col_ref, global_min, global_max, num_buckets)
-    }
+                           column_name,
+                           col_ref, bucket_lo, bucket_hi, effective_buckets,
+                           col_ref, col_ref, col_ref,
+                           global_min, global_max,
+                           nan_count, inf_count, non_nan_count,
+                           where_filter,
+                           col_ref, bucket_lo, bucket_hi, effective_buckets)
   }
 
   return(select_expr)
@@ -550,6 +531,7 @@ build_table_histogram_query <- function(table_name, columns_df, global_stats, ru
       global_min = stat$global_min,
       global_max = stat$global_max,
       nan_count = stat$nan_count,
+      inf_count = stat$inf_count,
       non_nan_count = stat$non_nan_count,
       num_buckets = num_buckets,
       col_ref = col$column_name,
@@ -570,6 +552,7 @@ SELECT
  global_min,
  global_max,
  nan_count,
+ inf_count,
  non_nan_count
 FROM (
 %s
@@ -602,6 +585,7 @@ SELECT
  MIN(global_min)::NUMERIC AS global_min,
  MAX(global_max)::NUMERIC AS global_max,
  MAX(nan_count)::NUMERIC AS nan_count,
+ MAX(inf_count)::NUMERIC AS inf_count,
  MAX(non_nan_count)::NUMERIC AS non_nan_count
 FROM %s
 GROUP BY table_name, column_name, bucket
@@ -648,20 +632,6 @@ execute_parallel_script <- function(runid, output_table, sql_query, db_user,
 #' Build Histogram Scripts for All Tables
 #'
 #' Prepares histogram queries and metadata for all tables in the module.
-#'
-#' @param columns_df Data frame of columns (from get_histogram_columns)
-#' @param global_stats Data frame of global statistics (from compute_global_stats)
-#' @param runid Run ID to filter data
-#' @param schema Output schema for histogram tables (default "dr4_ops_cs48_mv")
-#' @param num_buckets Number of histogram buckets (default 20)
-#' @param join_clauses Named list of table-specific JOIN clauses
-#' @param default_join_clause Default JOIN clause for tables not in join_clauses
-#' @return Named list of script info, one entry per table
-#' @keywords internal
-#' Build Histogram Scripts for All Tables
-#'
-#' Prepares histogram queries and metadata for all tables in the module.
-#' Skips columns with invalid global statistics (NA, Inf, or min >= max).
 #'
 #' @param columns_df Data frame of columns (from get_histogram_columns)
 #' @param global_stats Data frame of global statistics (from compute_global_stats)
@@ -851,6 +821,7 @@ compute_bucket_boundaries <- function(histogram_df, num_buckets = 20) {
       # Ensure numeric types (in case of integer64 from DB)
       freq = as.numeric(freq),
       nan_count = as.numeric(nan_count),
+      inf_count = as.numeric(inf_count),
       non_nan_count = as.numeric(non_nan_count),
       global_min = as.numeric(global_min),
       global_max = as.numeric(global_max)

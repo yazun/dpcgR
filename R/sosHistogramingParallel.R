@@ -80,10 +80,10 @@ get_histogram_columns <- function(conn, module) {
 #'
 #' Queries the database to find all numeric columns (float/int) in tables
 #' belonging to the specified module, excluding system columns like
-#' runid, catalogid, sourceid, etc.
+#' runid, catalogid, sourceid, etc. for any given table 9module)
 #'
 #' @param conn DBI database connection
-#' @param module Module name to filter tables by (matched against dpcg_orm_module_table_mapping)
+#' @param module Module name to filter tables by -effectively a DB table
 #' @return Data frame with columns: table_name, column_name, udt_name
 #' @examples
 #' \dontrun{

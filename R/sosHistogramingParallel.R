@@ -34,6 +34,68 @@ sanitize_identifier <- function(name, max_length = 63) {
   return(sanitized)
 }
 
+#' Expand Array Columns into Per-Element Rows
+#'
+#' Transforms a columns data frame by expanding array-type columns into
+#' separate rows for the first two elements plus the array length.
+#' Scalar columns pass through unchanged.
+#'
+#' For each array column, three virtual rows are created:
+#' \itemize{
+#'   \item \code{colname_1}: first element (\code{colname[1]}), filtered to arrays with length >= 1
+#'   \item \code{colname_2}: second element (\code{colname[2]}), filtered to arrays with length >= 2
+#'   \item \code{colname_len}: array length (\code{cardinality(colname)}), treated as integer
+#' }
+#'
+#' @param columns_df Data frame with columns: table_name, column_name, udt_name
+#' @return Data frame with columns: table_name, column_name, udt_name, col_ref,
+#'   min_array_len. \code{col_ref} contains the SQL expression template
+#'   (e.g., \code{colname[1]}). \code{min_array_len} is the minimum array
+#'   cardinality required (0 for scalars, 1 or 2 for array elements).
+#' @keywords internal
+expand_array_columns <- function(columns_df) {
+  if (nrow(columns_df) == 0) {
+    columns_df$col_ref <- character(0)
+    columns_df$min_array_len <- integer(0)
+    columns_df$array_col <- character(0)
+    return(columns_df)
+  }
+
+  expanded <- lapply(seq_len(nrow(columns_df)), function(i) {
+    row <- columns_df[i, ]
+    if (grepl("^_", row$udt_name)) {
+      # Array type: expand into element [1], [2], and cardinality
+      base_udt <- sub("^_", "", row$udt_name)
+      cn <- row$column_name
+      data.frame(
+        table_name = rep(row$table_name, 3),
+        column_name = c(paste0(cn, "_1"), paste0(cn, "_2"), paste0(cn, "_len")),
+        udt_name = c(base_udt, base_udt, "int4"),
+        col_ref = c(
+          sprintf("%s[1]", cn),
+          sprintf("%s[2]", cn),
+          sprintf("cardinality(%s)", cn)
+        ),
+        min_array_len = c(1L, 2L, 0L),
+        array_col = rep(cn, 3),
+        stringsAsFactors = FALSE
+      )
+    } else {
+      # Scalar type: col_ref is just the column_name
+      data.frame(
+        table_name = row$table_name,
+        column_name = row$column_name,
+        udt_name = row$udt_name,
+        col_ref = row$column_name,
+        min_array_len = 0L,
+        array_col = NA_character_,
+        stringsAsFactors = FALSE
+      )
+    }
+  })
+  bind_rows(expanded)
+}
+
 #' Get Numeric Columns for Histogram Generation
 #'
 #' Queries the database to find all numeric columns (float/int) in tables
@@ -42,7 +104,8 @@ sanitize_identifier <- function(name, max_length = 63) {
 #'
 #' @param conn DBI database connection
 #' @param module Module name to filter tables by (matched against dpcg_orm_module_table_mapping)
-#' @return Data frame with columns: table_name, column_name, udt_name
+#' @return Data frame with columns: table_name, column_name, udt_name, col_ref.
+#'   For array columns, each column is expanded into two rows (one per element).
 #' @examples
 #' \dontrun{
 #' conn <- DBI::dbConnect(...)
@@ -64,14 +127,14 @@ get_histogram_columns <- function(conn, module) {
      FROM information_schema.columns c
      JOIN t USING(table_name)
      WHERE c.column_name !~ 'runid|catalogid|sourceid|fstate|sostype|error|other'
-       AND c.udt_name ~ '^float|^int'
+       AND c.udt_name ~ '^float|^int|^_float|^_int'
        AND c.table_schema = current_schema()
      ORDER BY c.table_name, c.column_name
    )
    SELECT * FROM columns_to_histogram
  ", module)
 
-  dbGetQuery(conn, query)
+  expand_array_columns(dbGetQuery(conn, query))
 }
 
 
@@ -84,7 +147,8 @@ get_histogram_columns <- function(conn, module) {
 #'
 #' @param conn DBI database connection
 #' @param module Module name to filter tables by (matched against dpcg_orm_module_table_mapping)
-#' @return Data frame with columns: table_name, column_name, udt_name
+#' @return Data frame with columns: table_name, column_name, udt_name, col_ref.
+#'   For array columns, each column is expanded into two rows (one per element).
 #' @examples
 #' \dontrun{
 #' conn <- DBI::dbConnect(...)
@@ -104,14 +168,14 @@ get_histogram_mdb_columns <- function(conn, module) {
      FROM information_schema.columns c
      JOIN t USING(table_name)
      WHERE c.column_name !~ 'runid|catalogid|sourceid|fstate|sostype|error|other'
-       AND c.udt_name ~ '^float|^int'
+       AND c.udt_name ~ '^float|^int|^_float|^_int'
        AND c.table_schema = current_schema()
      ORDER BY c.table_name, c.column_name
    )
    SELECT * FROM columns_to_histogram
  ", module)
 
-  dbGetQuery(conn, query)
+  expand_array_columns(dbGetQuery(conn, query))
 }
 
 
@@ -155,35 +219,42 @@ build_global_stats_query <- function(table_name, columns_df, runid,
   select_parts <- sapply(seq_len(nrow(table_cols)), function(i) {
     col <- table_cols[i, ]
     col_name <- col$column_name
-    col_ref <- paste0(col_prefix, col_name)
+    col_ref <- paste0(col_prefix, col$col_ref)
+
+    # Build cardinality filter for array element columns
+    ef <- ""
+    if (!is.na(col$array_col) && col$min_array_len > 0) {
+      ef <- sprintf("cardinality(%s%s) >= %d AND ",
+                     col_prefix, col$array_col, col$min_array_len)
+    }
 
     if (grepl("^float", col$udt_name)) {
       # For float columns: filter out NaN, Inf, and NULL, use COALESCE for empty results
       # Use 'NaN'::float8 as default for min/max to indicate "no valid data"
       sprintf("
-   COALESCE(min(%s) FILTER (WHERE %s IS NOT NULL AND %s != 'NaN'::float8 AND %s != 'Infinity'::float8 AND %s != '-Infinity'::float8), 'NaN'::float8) AS %s_min,
-   COALESCE(max(%s) FILTER (WHERE %s IS NOT NULL AND %s != 'NaN'::float8 AND %s != 'Infinity'::float8 AND %s != '-Infinity'::float8), 'NaN'::float8) AS %s_max,
-   COALESCE(count(*) FILTER (WHERE %s = 'NaN'::float8), 0) AS %s_nan,
-   COALESCE(count(*) FILTER (WHERE %s = 'Infinity'::float8 OR %s = '-Infinity'::float8), 0) AS %s_inf,
-   COALESCE(count(*) FILTER (WHERE %s IS NOT NULL AND %s != 'NaN'::float8 AND %s != 'Infinity'::float8 AND %s != '-Infinity'::float8), 0) AS %s_valid",
-              col_ref, col_ref, col_ref, col_ref, col_ref, col_name,
-              col_ref, col_ref, col_ref, col_ref, col_ref, col_name,
-              col_ref, col_name,
-              col_ref, col_ref, col_name,
-              col_ref, col_ref, col_ref, col_ref, col_name)
+   COALESCE(min(%s) FILTER (WHERE %s%s IS NOT NULL AND %s != 'NaN'::float8 AND %s != 'Infinity'::float8 AND %s != '-Infinity'::float8), 'NaN'::float8) AS %s_min,
+   COALESCE(max(%s) FILTER (WHERE %s%s IS NOT NULL AND %s != 'NaN'::float8 AND %s != 'Infinity'::float8 AND %s != '-Infinity'::float8), 'NaN'::float8) AS %s_max,
+   COALESCE(count(*) FILTER (WHERE %s%s = 'NaN'::float8), 0) AS %s_nan,
+   COALESCE(count(*) FILTER (WHERE %s(%s = 'Infinity'::float8 OR %s = '-Infinity'::float8)), 0) AS %s_inf,
+   COALESCE(count(*) FILTER (WHERE %s%s IS NOT NULL AND %s != 'NaN'::float8 AND %s != 'Infinity'::float8 AND %s != '-Infinity'::float8), 0) AS %s_valid",
+              col_ref, ef, col_ref, col_ref, col_ref, col_ref, col_name,
+              col_ref, ef, col_ref, col_ref, col_ref, col_ref, col_name,
+              ef, col_ref, col_name,
+              ef, col_ref, col_ref, col_name,
+              ef, col_ref, col_ref, col_ref, col_ref, col_name)
     } else {
       # For integer columns: no NaN or Inf possible, just filter NULL
       sprintf("
-   COALESCE(min(%s), 0) AS %s_min,
-   COALESCE(max(%s), 0) AS %s_max,
+   COALESCE(min(%s) FILTER (WHERE %s%s IS NOT NULL), 0) AS %s_min,
+   COALESCE(max(%s) FILTER (WHERE %s%s IS NOT NULL), 0) AS %s_max,
    0::bigint AS %s_nan,
    0::bigint AS %s_inf,
-   COALESCE(count(*) FILTER (WHERE %s IS NOT NULL), 0) AS %s_valid",
-              col_ref, col_name,
-              col_ref, col_name,
+   COALESCE(count(*) FILTER (WHERE %s%s IS NOT NULL), 0) AS %s_valid",
+              col_ref, ef, col_ref, col_name,
+              col_ref, ef, col_ref, col_name,
               col_name,
               col_name,
-              col_ref, col_name)
+              ef, col_ref, col_name)
     }
   })
 
@@ -409,11 +480,12 @@ compute_global_stats <- function(conn, columns_df, runid,
 #' @param num_buckets Number of histogram buckets
 #' @param col_ref Column reference (may include table alias prefix)
 #' @param table_name Name of the source table
+#' @param extra_where Additional WHERE clause (e.g., cardinality filter for array elements)
 #' @return SQL SELECT statement string
 #' @keywords internal
 build_column_bucket_select <- function(column_name, udt_name, global_min, global_max,
                                        nan_count, inf_count, non_nan_count, num_buckets,
-                                       col_ref, table_name) {
+                                       col_ref, table_name, extra_where = "") {
 
   # Sanitize inputs
   nan_count <- as.integer(ifelse(is.na(nan_count) | is.nan(nan_count), 0, nan_count))
@@ -453,6 +525,11 @@ build_column_bucket_select <- function(column_name, udt_name, global_min, global
       col_ref, col_ref, col_ref, col_ref)
   } else {
     where_filter <- sprintf("%s IS NOT NULL", col_ref)
+  }
+
+  # Prepend extra WHERE condition (e.g., cardinality check for array elements)
+  if (nzchar(extra_where)) {
+    where_filter <- paste(extra_where, "AND", where_filter)
   }
 
   # Handle edge case: all values are the same (or all NULL/NaN)
@@ -548,10 +625,31 @@ build_table_histogram_query <- function(table_name, columns_df, global_stats, ru
     sourceid_ref <- "sourceid"
   }
 
-  # Build column list for CTE
-  col_list <- paste(sapply(table_cols$column_name, function(cn) {
-    paste0(col_prefix, cn)
-  }), collapse = ", ")
+  # Build column list for CTE, aliasing array element expressions
+  cte_parts <- sapply(seq_len(nrow(table_cols)), function(i) {
+    ref_expr <- paste0(col_prefix, table_cols$col_ref[i])
+    col_name <- table_cols$column_name[i]
+    if (table_cols$col_ref[i] != col_name) {
+      # Array element or derived expression: need explicit alias
+      sprintf("%s AS %s", ref_expr, col_name)
+    } else {
+      ref_expr
+    }
+  })
+
+  # Ensure cardinality columns are in CTE for array element filtering
+  # (even if _len column itself was filtered out by stats validation)
+  array_cols_needed <- unique(na.omit(
+    table_cols$array_col[table_cols$min_array_len > 0]
+  ))
+  for (ac in array_cols_needed) {
+    len_name <- paste0(ac, "_len")
+    if (!(len_name %in% table_cols$column_name)) {
+      cte_parts <- c(cte_parts,
+                      sprintf("cardinality(%s%s) AS %s", col_prefix, ac, len_name))
+    }
+  }
+  col_list <- paste(cte_parts, collapse = ", ")
 
   # Build CTE
   cte <- sprintf("WITH base AS (
@@ -566,6 +664,13 @@ build_table_histogram_query <- function(table_name, columns_df, global_stats, ru
     col <- table_cols[i, ]
     stat <- table_stats[table_stats$column_name == col$column_name, ]
 
+    # Build cardinality filter for array element columns
+    # In the CTE, array length is available as <array_col>_len
+    extra_where <- ""
+    if (!is.na(col$array_col) && col$min_array_len > 0) {
+      extra_where <- sprintf("%s_len >= %d", col$array_col, col$min_array_len)
+    }
+
     build_column_bucket_select(
       column_name = col$column_name,
       udt_name = col$udt_name,
@@ -576,7 +681,8 @@ build_table_histogram_query <- function(table_name, columns_df, global_stats, ru
       non_nan_count = stat$non_nan_count,
       num_buckets = num_buckets,
       col_ref = col$column_name,
-      table_name = table_name
+      table_name = table_name,
+      extra_where = extra_where
     )
   })
 

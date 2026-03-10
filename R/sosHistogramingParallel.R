@@ -167,9 +167,9 @@ get_histogram_mdb_columns <- function(conn, module) {
        c.udt_name
      FROM information_schema.columns c
      JOIN t USING(table_name)
-     WHERE c.column_name !~ 'runid|catalogid|sourceid|fstate|sostype|error|other'
+     WHERE c.column_name !~ 'runid|catalogid|sourceid|fstate|sostype|error|other|file_id|transfer_id'
        AND c.udt_name ~ '^float|^int|^_float|^_int'
-       AND c.table_schema = current_schema()
+       AND c.table_schema in (current_schema(),current_schema()||'_mdb')
      ORDER BY c.table_name, c.column_name
    )
    SELECT * FROM columns_to_histogram

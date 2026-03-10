@@ -37,23 +37,25 @@ sanitize_identifier <- function(name, max_length = 63) {
 #' Expand Array Columns into Per-Element Rows
 #'
 #' Transforms a columns data frame by expanding array-type columns into
-#' separate rows for the first two elements plus the array length.
+#' separate rows for the first \code{n} elements plus the array length.
 #' Scalar columns pass through unchanged.
 #'
-#' For each array column, three virtual rows are created:
+#' For each array column, \code{n + 1} virtual rows are created:
 #' \itemize{
-#'   \item \code{colname_1}: first element (\code{colname[1]}), filtered to arrays with length >= 1
-#'   \item \code{colname_2}: second element (\code{colname[2]}), filtered to arrays with length >= 2
+#'   \item \code{colname_1} through \code{colname_n}: individual elements
+#'     (\code{colname[1]} ... \code{colname[n]}), each filtered to arrays
+#'     with length >= that index
 #'   \item \code{colname_len}: array length (\code{cardinality(colname)}), treated as integer
 #' }
 #'
 #' @param columns_df Data frame with columns: table_name, column_name, udt_name
+#' @param n Number of array elements to expand per column (default 10)
 #' @return Data frame with columns: table_name, column_name, udt_name, col_ref,
-#'   min_array_len. \code{col_ref} contains the SQL expression template
+#'   min_array_len, array_col. \code{col_ref} contains the SQL expression
 #'   (e.g., \code{colname[1]}). \code{min_array_len} is the minimum array
-#'   cardinality required (0 for scalars, 1 or 2 for array elements).
+#'   cardinality required (0 for scalars and _len, 1..n for array elements).
 #' @keywords internal
-expand_array_columns <- function(columns_df) {
+expand_array_columns <- function(columns_df, n = 10) {
   if (nrow(columns_df) == 0) {
     columns_df$col_ref <- character(0)
     columns_df$min_array_len <- integer(0)
@@ -64,20 +66,22 @@ expand_array_columns <- function(columns_df) {
   expanded <- lapply(seq_len(nrow(columns_df)), function(i) {
     row <- columns_df[i, ]
     if (grepl("^_", row$udt_name)) {
-      # Array type: expand into element [1], [2], and cardinality
+      # Array type: expand into elements [1]..[n] and cardinality
       base_udt <- sub("^_", "", row$udt_name)
       cn <- row$column_name
+      # Element rows: colname_1 .. colname_n
+      elem_names <- paste0(cn, "_", seq_len(n))
+      elem_refs <- sprintf("%s[%d]", cn, seq_len(n))
+      elem_udts <- rep(base_udt, n)
+      elem_min_len <- seq_len(n)
+      # Length row: colname_len
       data.frame(
-        table_name = rep(row$table_name, 3),
-        column_name = c(paste0(cn, "_1"), paste0(cn, "_2"), paste0(cn, "_len")),
-        udt_name = c(base_udt, base_udt, "int4"),
-        col_ref = c(
-          sprintf("%s[1]", cn),
-          sprintf("%s[2]", cn),
-          sprintf("cardinality(%s)", cn)
-        ),
-        min_array_len = c(1L, 2L, 0L),
-        array_col = rep(cn, 3),
+        table_name = rep(row$table_name, n + 1),
+        column_name = c(elem_names, paste0(cn, "_len")),
+        udt_name = c(elem_udts, "int4"),
+        col_ref = c(elem_refs, sprintf("cardinality(%s)", cn)),
+        min_array_len = c(as.integer(elem_min_len), 0L),
+        array_col = rep(cn, n + 1),
         stringsAsFactors = FALSE
       )
     } else {
@@ -151,10 +155,12 @@ detect_system_columns <- function(conn, table_names) {
 #'
 #' @param conn DBI database connection
 #' @param module Module name to filter tables by (matched against dpcg_orm_module_table_mapping)
+#' @param array_elements Number of array elements to expand per array column (default 10)
 #' @return List with two elements:
 #'   \itemize{
 #'     \item \code{columns}: Data frame with columns: table_name, column_name, udt_name, col_ref.
-#'       For array columns, each column is expanded into two rows (one per element).
+#'       For array columns, each column is expanded into \code{array_elements} rows (one per element)
+#'       plus a length row.
 #'     \item \code{table_info}: Data frame with columns: table_name, has_runid, has_catalogid, has_sourceid.
 #'   }
 #' @examples
@@ -165,7 +171,7 @@ detect_system_columns <- function(conn, table_names) {
 #' result$table_info # system column presence per table
 #' }
 #' @export
-get_histogram_columns <- function(conn, module) {
+get_histogram_columns <- function(conn, module, array_elements = 10) {
   query <- sprintf("
    WITH t AS (
      SELECT tbl.table_name
@@ -188,7 +194,7 @@ get_histogram_columns <- function(conn, module) {
  ", module)
 
   raw_df <- dbGetQuery(conn, query)
-  columns_df <- expand_array_columns(raw_df)
+  columns_df <- expand_array_columns(raw_df, n = array_elements)
   table_info <- detect_system_columns(conn, unique(raw_df$table_name))
 
   list(columns = columns_df, table_info = table_info)
@@ -204,10 +210,12 @@ get_histogram_columns <- function(conn, module) {
 #'
 #' @param conn DBI database connection
 #' @param module Module name to filter tables by - effectively a DB table
+#' @param array_elements Number of array elements to expand per array column (default 10)
 #' @return List with two elements:
 #'   \itemize{
 #'     \item \code{columns}: Data frame with columns: table_name, column_name, udt_name, col_ref.
-#'       For array columns, each column is expanded into two rows (one per element).
+#'       For array columns, each column is expanded into \code{array_elements} rows (one per element)
+#'       plus a length row.
 #'     \item \code{table_info}: Data frame with columns: table_name, has_runid, has_catalogid, has_sourceid.
 #'   }
 #' @examples
@@ -218,7 +226,7 @@ get_histogram_columns <- function(conn, module) {
 #' result$table_info # system column presence per table
 #' }
 #' @export
-get_histogram_mdb_columns <- function(conn, module) {
+get_histogram_mdb_columns <- function(conn, module, array_elements = 10) {
   query <- sprintf("
    WITH t AS (
      SELECT '%s' table_name
@@ -239,7 +247,7 @@ get_histogram_mdb_columns <- function(conn, module) {
  ", module)
 
   raw_df <- dbGetQuery(conn, query)
-  columns_df <- expand_array_columns(raw_df)
+  columns_df <- expand_array_columns(raw_df, n = array_elements)
   table_info <- detect_system_columns(conn, unique(raw_df$table_name))
 
   list(columns = columns_df, table_info = table_info)
@@ -947,13 +955,20 @@ build_histogram_scripts <- function(columns_df, global_stats, runid,
       !is.na(global_min) & !is.na(global_max) &
         !is.infinite(global_min) & !is.infinite(global_max) &
         !is.nan(global_min) & !is.nan(global_max) &
-        global_min < global_max &
+        global_min <= global_max &
         non_nan_count > 0
     )
 
   skipped_cols <- nrow(global_stats) - nrow(valid_stats)
   if (skipped_cols > 0) {
-    cat(sprintf("  Skipping %d columns with invalid stats (Inf/NaN/empty)\n", skipped_cols))
+    skipped <- global_stats %>%
+      anti_join(valid_stats, by = c("table_name", "column_name"))
+    cat(sprintf("  Skipping %d columns with invalid stats (Inf/NaN/no data):\n", skipped_cols))
+    for (j in seq_len(nrow(skipped))) {
+      s <- skipped[j, ]
+      cat(sprintf("    %s.%s: min=%s max=%s valid=%s\n",
+                  s$table_name, s$column_name, s$global_min, s$global_max, s$non_nan_count))
+    }
   }
 
   # Filter columns_df to only include columns with valid stats
@@ -1138,7 +1153,8 @@ execute_histogram_scripts <- function(scripts, runid, db_user, conn = NULL,
 #' Compute Bucket Boundaries for Visualization
 #'
 #' Adds computed bucket boundary columns to histogram data for plotting,
-#' including bucket_lower, bucket_upper, bucket_center, bucket_width, and freq_pct.
+#' using the actual bucket_min/bucket_max values from the SQL query for
+#' accurate display. Also computes freq_pct (frequency percentage).
 #'
 #' @param histogram_df Data frame with histogram data
 #' @param num_buckets Number of histogram buckets (must match original query)
@@ -1153,14 +1169,18 @@ compute_bucket_boundaries <- function(histogram_df, num_buckets = 20) {
       inf_count = as.numeric(inf_count),
       non_nan_count = as.numeric(non_nan_count),
       global_min = as.numeric(global_min),
-      global_max = as.numeric(global_max)
+      global_max = as.numeric(global_max),
+      bucket_min = as.numeric(bucket_min),
+      bucket_max = as.numeric(bucket_max),
+      bucket_avg = as.numeric(bucket_avg)
     ) %>%
     group_by(table_name, column_name) %>%
     mutate(
-      bucket_width = (global_max - global_min) / num_buckets,
-      bucket_lower = global_min + (bucket - 1) * bucket_width,
-      bucket_upper = global_min + bucket * bucket_width,
+      # Use actual bucket_min/bucket_max from SQL for accurate boundaries
+      bucket_lower = bucket_min,
+      bucket_upper = bucket_max,
       bucket_center = (bucket_lower + bucket_upper) / 2,
+      bucket_width = bucket_upper - bucket_lower,
       freq_pct = freq / sum(freq) * 100
     ) %>%
     ungroup()
@@ -1193,6 +1213,9 @@ compute_bucket_boundaries <- function(histogram_df, num_buckets = 20) {
 #' @param join_clauses Named list of table-specific JOIN clauses, e.g.,
 #'   \code{list(sos_cepheidsattributes = "JOIN selection_table USING (sourceid)")}
 #' @param default_join_clause Default JOIN clause applied to tables not in join_clauses
+#' @param array_elements Number of array elements to expand per array column (default 10).
+#'   For each array column, histograms are generated for elements 1 through \code{array_elements}
+#'   plus the array length. Elements beyond the actual array size are automatically filtered out.
 #' @param slack_user Slack user for notifications (default "@nienarto")
 #' @param parallelism Number of parallel workers for partParalXZ4 (default 80)
 #' @param num_chunks Number of data chunks for partParalXZ4 (default 600)
@@ -1250,6 +1273,7 @@ run_histogram_analysis <- function(inparams, runid, module,
                                    join_clauses = NULL,
                                    default_join_clause = NULL,
                                    columns_fn = get_histogram_columns,
+                                   array_elements = 10,
                                    slack_user = "@nienarto",
                                    parallelism = 80,
                                    num_chunks = 600,
@@ -1262,7 +1286,14 @@ run_histogram_analysis <- function(inparams, runid, module,
   cat(sprintf("Using database user: %s\n\n", inparams$dbUser))
 
   # Get column metadata and system column info
-  col_result <- columns_fn(conn, module)
+  # Pass array_elements if columns_fn accepts it (our built-in functions do)
+  col_result <- tryCatch(
+    columns_fn(conn, module, array_elements = array_elements),
+    error = function(e) {
+      # Fallback for custom columns_fn that don't accept array_elements
+      columns_fn(conn, module)
+    }
+  )
   if (is.data.frame(col_result)) {
     # Backwards compatibility: if columns_fn returns a plain data frame
     columns_df <- col_result

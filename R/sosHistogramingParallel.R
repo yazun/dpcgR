@@ -96,6 +96,53 @@ expand_array_columns <- function(columns_df) {
   bind_rows(expanded)
 }
 
+#' Detect System Columns Per Table
+#'
+#' Queries \code{information_schema.columns} to determine which system columns
+#' (runid, catalogid, sourceid) exist for each table. Returns a data frame
+#' with one row per table and boolean flags for each system column.
+#'
+#' @param conn DBI database connection
+#' @param table_names Character vector of table names to check
+#' @return Data frame with columns: table_name, has_runid, has_catalogid, has_sourceid
+#' @keywords internal
+detect_system_columns <- function(conn, table_names) {
+  if (length(table_names) == 0) {
+    return(data.frame(
+      table_name = character(0),
+      has_runid = logical(0),
+      has_catalogid = logical(0),
+      has_sourceid = logical(0),
+      stringsAsFactors = FALSE
+    ))
+  }
+
+  tables_sql <- paste(sprintf("'%s'", table_names), collapse = ", ")
+  query <- sprintf("
+    SELECT
+      c.table_name,
+      bool_or(c.column_name = 'runid') AS has_runid,
+      bool_or(c.column_name = 'catalogid') AS has_catalogid,
+      bool_or(c.column_name = 'sourceid') AS has_sourceid
+    FROM information_schema.columns c
+    WHERE c.table_name IN (%s)
+      AND c.table_schema = current_schema()
+      AND c.column_name IN ('runid', 'catalogid', 'sourceid')
+    GROUP BY c.table_name
+  ", tables_sql)
+
+  result <- dbGetQuery(conn, query)
+
+  # Ensure all tables are represented, even if they have none of these columns
+  all_tables <- data.frame(table_name = table_names, stringsAsFactors = FALSE)
+  merged <- merge(all_tables, result, by = "table_name", all.x = TRUE)
+  merged$has_runid[is.na(merged$has_runid)] <- FALSE
+  merged$has_catalogid[is.na(merged$has_catalogid)] <- FALSE
+  merged$has_sourceid[is.na(merged$has_sourceid)] <- FALSE
+
+  return(merged)
+}
+
 #' Get Numeric Columns for Histogram Generation
 #'
 #' Queries the database to find all numeric columns (float/int) in tables
@@ -104,12 +151,18 @@ expand_array_columns <- function(columns_df) {
 #'
 #' @param conn DBI database connection
 #' @param module Module name to filter tables by (matched against dpcg_orm_module_table_mapping)
-#' @return Data frame with columns: table_name, column_name, udt_name, col_ref.
-#'   For array columns, each column is expanded into two rows (one per element).
+#' @return List with two elements:
+#'   \itemize{
+#'     \item \code{columns}: Data frame with columns: table_name, column_name, udt_name, col_ref.
+#'       For array columns, each column is expanded into two rows (one per element).
+#'     \item \code{table_info}: Data frame with columns: table_name, has_runid, has_catalogid, has_sourceid.
+#'   }
 #' @examples
 #' \dontrun{
 #' conn <- DBI::dbConnect(...)
-#' columns <- get_histogram_columns(conn, "gaia.cu7.algo.sos.CepheidAndRRLyrae")
+#' result <- get_histogram_columns(conn, "gaia.cu7.algo.sos.CepheidAndRRLyrae")
+#' result$columns   # column metadata
+#' result$table_info # system column presence per table
 #' }
 #' @export
 get_histogram_columns <- function(conn, module) {
@@ -134,7 +187,11 @@ get_histogram_columns <- function(conn, module) {
    SELECT * FROM columns_to_histogram
  ", module)
 
-  expand_array_columns(dbGetQuery(conn, query))
+  raw_df <- dbGetQuery(conn, query)
+  columns_df <- expand_array_columns(raw_df)
+  table_info <- detect_system_columns(conn, unique(raw_df$table_name))
+
+  list(columns = columns_df, table_info = table_info)
 }
 
 
@@ -143,16 +200,22 @@ get_histogram_columns <- function(conn, module) {
 #'
 #' Queries the database to find all numeric columns (float/int) in tables
 #' belonging to the specified module, excluding system columns like
-#' runid, catalogid, sourceid, etc. for any given table 9module)
+#' runid, catalogid, sourceid, etc. for any given table (module)
 #'
 #' @param conn DBI database connection
 #' @param module Module name to filter tables by - effectively a DB table
-#' @return Data frame with columns: table_name, column_name, udt_name, col_ref.
-#'   For array columns, each column is expanded into two rows (one per element).
+#' @return List with two elements:
+#'   \itemize{
+#'     \item \code{columns}: Data frame with columns: table_name, column_name, udt_name, col_ref.
+#'       For array columns, each column is expanded into two rows (one per element).
+#'     \item \code{table_info}: Data frame with columns: table_name, has_runid, has_catalogid, has_sourceid.
+#'   }
 #' @examples
 #' \dontrun{
 #' conn <- DBI::dbConnect(...)
-#' columns <- get_histogram_columns(conn, "gaia.cu7.algo.sos.CepheidAndRRLyrae")
+#' result <- get_histogram_mdb_columns(conn, "gaia.cu7.algo.sos.CepheidAndRRLyrae")
+#' result$columns   # column metadata
+#' result$table_info # system column presence per table
 #' }
 #' @export
 get_histogram_mdb_columns <- function(conn, module) {
@@ -175,7 +238,11 @@ get_histogram_mdb_columns <- function(conn, module) {
    SELECT * FROM columns_to_histogram
  ", module)
 
-  expand_array_columns(dbGetQuery(conn, query))
+  raw_df <- dbGetQuery(conn, query)
+  columns_df <- expand_array_columns(raw_df)
+  table_info <- detect_system_columns(conn, unique(raw_df$table_name))
+
+  list(columns = columns_df, table_info = table_info)
 }
 
 
@@ -184,20 +251,36 @@ get_histogram_mdb_columns <- function(conn, module) {
 #' Generates a SQL query that computes min, max, NaN count, and valid count
 #' for all numeric columns in a table. Uses COALESCE to ensure non-NULL values
 #' are always returned (required for partParalXZ4 table creation).
+#' Conditionally includes runid/catalogid/sourceid filters based on table_info.
 #'
 #' @param table_name Name of the table to query
 #' @param columns_df Data frame of columns (from get_histogram_columns)
 #' @param runid Run ID to filter data
 #' @param join_clause Optional SQL JOIN clause to limit selection
 #' @param table_alias Alias for the main table when using join_clause (default "t")
+#' @param table_info Data frame with has_runid/has_catalogid/has_sourceid flags (from detect_system_columns)
 #' @return SQL query string, or NULL if no columns found
 #' @keywords internal
 build_global_stats_query <- function(table_name, columns_df, runid,
-                                     join_clause = NULL, table_alias = "t") {
+                                     join_clause = NULL, table_alias = "t",
+                                     table_info = NULL) {
 
   table_cols <- columns_df[columns_df$table_name == table_name, ]
 
   if (nrow(table_cols) == 0) return(NULL)
+
+  # Determine which system columns exist for this table
+  has_runid <- TRUE
+  has_catalogid <- TRUE
+  has_sourceid <- TRUE
+  if (!is.null(table_info)) {
+    ti <- table_info[table_info$table_name == table_name, ]
+    if (nrow(ti) > 0) {
+      has_runid <- ti$has_runid[1]
+      has_catalogid <- ti$has_catalogid[1]
+      has_sourceid <- ti$has_sourceid[1]
+    }
+  }
 
   # Build FROM clause
   if (!is.null(join_clause) && nzchar(join_clause)) {
@@ -258,10 +341,29 @@ build_global_stats_query <- function(table_name, columns_df, runid,
     }
   })
 
-  # Include sourceid = sourceid construct for partParalXZ4 parallel execution
-  query <- sprintf("SELECT %s\nFROM %s\nWHERE %s = %d AND catalogid=getmaincatalog() AND %s = %s",
-                   paste(select_parts, collapse = ","),
-                   from_clause, runid_ref, runid, sourceid_ref, sourceid_ref)
+  # Build WHERE clause conditionally based on available system columns
+  where_parts <- c()
+  if (has_runid) {
+    where_parts <- c(where_parts, sprintf("%s = %d", runid_ref, runid))
+  }
+  if (has_catalogid) {
+    where_parts <- c(where_parts, "catalogid=getmaincatalog()")
+  }
+  if (has_sourceid) {
+    # sourceid = sourceid construct for partParalXZ4 parallel execution
+    where_parts <- c(where_parts, sprintf("%s = %s", sourceid_ref, sourceid_ref))
+  }
+
+  if (length(where_parts) > 0) {
+    query <- sprintf("SELECT %s\nFROM %s\nWHERE %s",
+                     paste(select_parts, collapse = ","),
+                     from_clause,
+                     paste(where_parts, collapse = " AND "))
+  } else {
+    query <- sprintf("SELECT %s\nFROM %s",
+                     paste(select_parts, collapse = ","),
+                     from_clause)
+  }
 
   return(query)
 }
@@ -375,7 +477,8 @@ compute_global_stats <- function(conn, columns_df, runid,
                                  join_clauses = NULL, default_join_clause = NULL,
                                  db_user = NULL, schema = "dr4_ops_cs48_mv",
                                  slack_user = "@nienarto", parallelism = 80,
-                                 num_chunks = 600, execute = TRUE, debug = FALSE) {
+                                 num_chunks = 600, execute = TRUE, debug = FALSE,
+                                 table_info = NULL) {
 
   if (nrow(columns_df) == 0) {
     stop("No columns found for histogram generation")
@@ -395,14 +498,22 @@ compute_global_stats <- function(conn, columns_df, runid,
       join_clause <- default_join_clause
     }
 
-    query <- build_global_stats_query(tbl, columns_df, runid, join_clause)
+    query <- build_global_stats_query(tbl, columns_df, runid, join_clause,
+                                       table_info = table_info)
+
+    # Check if this table has sourceid (required for parallel execution)
+    tbl_has_sourceid <- TRUE
+    if (!is.null(table_info)) {
+      ti <- table_info[table_info$table_name == tbl, ]
+      if (nrow(ti) > 0) tbl_has_sourceid <- ti$has_sourceid[1]
+    }
 
     if (!is.null(query)) {
       n_cols <- sum(columns_df$table_name == tbl)
       cat(sprintf("  %s (%d columns)...\n", tbl, n_cols))
 
-      if (execute && !is.null(db_user)) {
-        # Execute via parallel script
+      if (execute && !is.null(db_user) && tbl_has_sourceid) {
+        # Execute via parallel script (requires sourceid for partitioning)
         output_table <- sprintf("%s.stats_%s_%d", schema, sanitize_identifier(tbl, 50), runid)
 
         if (debug) {
@@ -442,10 +553,13 @@ compute_global_stats <- function(conn, columns_df, runid,
         })
 
       } else {
-        # Execute directly (non-parallel, for testing or small datasets)
-        # Remove the sourceid = sourceid clause for direct execution
+        # Execute directly (non-parallel: testing, small datasets, or table without sourceid)
+        # Remove the sourceid = sourceid clause for direct execution (if present)
         direct_query <- gsub(" AND [a-z_]*\\.?sourceid = [a-z_]*\\.?sourceid", "", query)
         if (debug) {
+          if (!tbl_has_sourceid) {
+            cat(sprintf("    Table %s has no sourceid - executing directly\n", tbl))
+          }
           cat(sprintf("    Direct query (first 500 chars): %s...\n", substr(direct_query, 1, 500)))
         }
         stats_wide <- dbGetQuery(conn, direct_query)
@@ -593,6 +707,7 @@ build_column_bucket_select <- function(column_name, udt_name, global_min, global
 #' Generates a complete SQL query for computing histograms for all columns
 #' in a table using a CTE and UNION ALL pattern. Uses precomputed global
 #' min/max boundaries to ensure consistent bucketing across parallel chunks.
+#' Conditionally includes runid/catalogid/sourceid filters based on table_info.
 #'
 #' @param table_name Name of the table to query
 #' @param columns_df Data frame of columns (from get_histogram_columns)
@@ -601,16 +716,30 @@ build_column_bucket_select <- function(column_name, udt_name, global_min, global
 #' @param num_buckets Number of histogram buckets (default 20)
 #' @param join_clause Optional SQL JOIN clause to limit selection
 #' @param table_alias Alias for the main table when using join_clause (default "t")
+#' @param table_info Data frame with has_runid/has_catalogid/has_sourceid flags (from detect_system_columns)
 #' @return SQL query string, or NULL if no columns found
 #' @keywords internal
 build_table_histogram_query <- function(table_name, columns_df, global_stats, runid,
                                         num_buckets = 20, join_clause = NULL,
-                                        table_alias = "t") {
+                                        table_alias = "t", table_info = NULL) {
 
   table_cols <- columns_df[columns_df$table_name == table_name, ]
   table_stats <- global_stats[global_stats$table_name == table_name, ]
 
   if (nrow(table_cols) == 0) return(NULL)
+
+  # Determine which system columns exist for this table
+  has_runid <- TRUE
+  has_catalogid <- TRUE
+  has_sourceid <- TRUE
+  if (!is.null(table_info)) {
+    ti <- table_info[table_info$table_name == table_name, ]
+    if (nrow(ti) > 0) {
+      has_runid <- ti$has_runid[1]
+      has_catalogid <- ti$has_catalogid[1]
+      has_sourceid <- ti$has_sourceid[1]
+    }
+  }
 
   # Build FROM clause for CTE
   if (!is.null(join_clause) && nzchar(join_clause)) {
@@ -651,13 +780,25 @@ build_table_histogram_query <- function(table_name, columns_df, global_stats, ru
   }
   col_list <- paste(cte_parts, collapse = ", ")
 
-  # Build CTE
-  cte <- sprintf("WITH base AS (
- SELECT %s
- FROM %s
- WHERE %s = %d and catalogid = getmaincatalog() AND %s = %s
-)",
-                 col_list, from_clause, runid_ref, runid, sourceid_ref, sourceid_ref)
+  # Build CTE with conditional WHERE based on available system columns
+  where_parts <- c()
+  if (has_runid) {
+    where_parts <- c(where_parts, sprintf("%s = %d", runid_ref, runid))
+  }
+  if (has_catalogid) {
+    where_parts <- c(where_parts, "catalogid = getmaincatalog()")
+  }
+  if (has_sourceid) {
+    where_parts <- c(where_parts, sprintf("%s = %s", sourceid_ref, sourceid_ref))
+  }
+
+  if (length(where_parts) > 0) {
+    cte <- sprintf("WITH base AS (\n SELECT %s\n FROM %s\n WHERE %s\n)",
+                   col_list, from_clause, paste(where_parts, collapse = " AND "))
+  } else {
+    cte <- sprintf("WITH base AS (\n SELECT %s\n FROM %s\n)",
+                   col_list, from_clause)
+  }
 
   # Build UNION ALL of bucket queries for each column
   union_parts <- sapply(seq_len(nrow(table_cols)), function(i) {
@@ -793,7 +934,8 @@ build_histogram_scripts <- function(columns_df, global_stats, runid,
                                     schema = "dr4_ops_cs48_mv",
                                     num_buckets = 20,
                                     join_clauses = NULL,
-                                    default_join_clause = NULL) {
+                                    default_join_clause = NULL,
+                                    table_info = NULL) {
 
   tables <- unique(columns_df$table_name)
 
@@ -840,10 +982,18 @@ build_histogram_scripts <- function(columns_df, global_stats, runid,
       global_stats = valid_stats,
       runid = runid,
       num_buckets = num_buckets,
-      join_clause = join_clause
+      join_clause = join_clause,
+      table_info = table_info
     )
 
     if (is.null(sql_query)) next
+
+    # Check if this table supports parallel execution (requires sourceid)
+    tbl_has_sourceid <- TRUE
+    if (!is.null(table_info)) {
+      ti <- table_info[table_info$table_name == tbl, ]
+      if (nrow(ti) > 0) tbl_has_sourceid <- ti$has_sourceid[1]
+    }
 
     output_table <- sprintf("%s.hist_%s_%d", schema, sanitize_identifier(tbl, 50), runid)
     n_cols <- nrow(tbl_cols)
@@ -854,6 +1004,7 @@ build_histogram_scripts <- function(columns_df, global_stats, runid,
       output_table = output_table,
       n_columns = n_cols,
       join_clause = join_clause,
+      has_sourceid = tbl_has_sourceid,
       aggregation_query = build_histogram_aggregation_query(output_table)
     )
 
@@ -903,36 +1054,67 @@ execute_histogram_scripts <- function(scripts, runid, db_user, conn = NULL,
     }
 
     if (execute) {
-      cat(sprintf("Executing %d/%d: %s (%d columns)...\n",
-                  i, length(scripts), tbl, script_info$n_columns))
+      tbl_has_sourceid <- isTRUE(script_info$has_sourceid)
 
-      exit_code <- execute_parallel_script(
-        runid = runid,
-        output_table = script_info$output_table,
-        sql_query = script_info$sql_query,
-        db_user = db_user,
-        slack_user = slack_user,
-        parallelism = parallelism,
-        num_chunks = num_chunks,
-        description = sprintf("Histogram %s", tbl)
-      )
+      cat(sprintf("Executing %d/%d: %s (%d columns)%s...\n",
+                  i, length(scripts), tbl, script_info$n_columns,
+                  if (!tbl_has_sourceid) " [direct - no sourceid]" else ""))
 
-      if (exit_code != 0) {
-        warning(sprintf("Script for %s failed with exit code %d", tbl, exit_code))
-        results[[tbl]] <- list(success = FALSE, exit_code = exit_code)
-      } else {
-        results[[tbl]] <- list(
-          success = TRUE,
-          source_table = tbl,
+      if (tbl_has_sourceid) {
+        # Parallel execution via partParalXZ4
+        exit_code <- execute_parallel_script(
+          runid = runid,
           output_table = script_info$output_table,
-          n_columns = script_info$n_columns
+          sql_query = script_info$sql_query,
+          db_user = db_user,
+          slack_user = slack_user,
+          parallelism = parallelism,
+          num_chunks = num_chunks,
+          description = sprintf("Histogram %s", tbl)
         )
 
+        if (exit_code != 0) {
+          warning(sprintf("Script for %s failed with exit code %d", tbl, exit_code))
+          results[[tbl]] <- list(success = FALSE, exit_code = exit_code)
+        } else {
+          results[[tbl]] <- list(
+            success = TRUE,
+            source_table = tbl,
+            output_table = script_info$output_table,
+            n_columns = script_info$n_columns
+          )
+
+          if (!is.null(conn)) {
+            cat(sprintf("  Aggregating results for %s...\n", tbl))
+            agg_result <- dbGetQuery(conn, script_info$aggregation_query)
+            results[[tbl]]$histogram_data <- agg_result
+            all_histograms[[tbl]] <- agg_result
+          }
+        }
+      } else {
+        # Direct execution for tables without sourceid
         if (!is.null(conn)) {
-          cat(sprintf("  Aggregating results for %s...\n", tbl))
-          agg_result <- dbGetQuery(conn, script_info$aggregation_query)
-          results[[tbl]]$histogram_data <- agg_result
-          all_histograms[[tbl]] <- agg_result
+          direct_result <- tryCatch({
+            dbGetQuery(conn, script_info$sql_query)
+          }, error = function(e) {
+            warning(sprintf("Direct query for %s failed: %s", tbl, e$message))
+            NULL
+          })
+
+          if (!is.null(direct_result) && nrow(direct_result) > 0) {
+            results[[tbl]] <- list(
+              success = TRUE,
+              source_table = tbl,
+              n_columns = script_info$n_columns,
+              histogram_data = direct_result
+            )
+            all_histograms[[tbl]] <- direct_result
+          } else {
+            results[[tbl]] <- list(success = FALSE, reason = "direct query returned no data")
+          }
+        } else {
+          warning(sprintf("Table %s has no sourceid and no conn provided for direct execution", tbl))
+          results[[tbl]] <- list(success = FALSE, reason = "no sourceid, no conn")
         }
       }
     } else {
@@ -1079,10 +1261,28 @@ run_histogram_analysis <- function(inparams, runid, module,
   cat(sprintf("=== HISTOGRAM ANALYSIS FOR MODULE '%s', RUNID %d ===\n\n", module, runid))
   cat(sprintf("Using database user: %s\n\n", inparams$dbUser))
 
-  # Get column metadata
-  columns_df <- columns_fn(conn, module)
+  # Get column metadata and system column info
+  col_result <- columns_fn(conn, module)
+  if (is.data.frame(col_result)) {
+    # Backwards compatibility: if columns_fn returns a plain data frame
+    columns_df <- col_result
+    table_info <- NULL
+  } else {
+    columns_df <- col_result$columns
+    table_info <- col_result$table_info
+  }
   cat(sprintf("Found %d columns across %d tables\n\n",
               nrow(columns_df), length(unique(columns_df$table_name))))
+
+  if (!is.null(table_info) && debug) {
+    cat("Table system column info:\n")
+    for (r in seq_len(nrow(table_info))) {
+      ti <- table_info[r, ]
+      cat(sprintf("  %s: runid=%s catalogid=%s sourceid=%s\n",
+                  ti$table_name, ti$has_runid, ti$has_catalogid, ti$has_sourceid))
+    }
+    cat("\n")
+  }
 
   # PHASE 1: Compute global statistics (parallel execution)
   cat("=== PHASE 1: Computing global statistics (parallel execution) ===\n")
@@ -1098,7 +1298,8 @@ run_histogram_analysis <- function(inparams, runid, module,
     parallelism = parallelism,
     num_chunks = num_chunks,
     execute = execute,
-    debug = debug
+    debug = debug,
+    table_info = table_info
   )
   cat("\n")
 
@@ -1111,7 +1312,8 @@ run_histogram_analysis <- function(inparams, runid, module,
     schema = schema,
     num_buckets = num_buckets,
     join_clauses = join_clauses,
-    default_join_clause = default_join_clause
+    default_join_clause = default_join_clause,
+    table_info = table_info
   )
   cat("\n")
 

@@ -74,6 +74,47 @@ get_histogram_columns <- function(conn, module) {
   dbGetQuery(conn, query)
 }
 
+
+
+#' Get Numeric Columns for Histogram Generation
+#'
+#' Queries the database to find all numeric columns (float/int) in tables
+#' belonging to the specified module, excluding system columns like
+#' runid, catalogid, sourceid, etc.
+#'
+#' @param conn DBI database connection
+#' @param module Module name to filter tables by (matched against dpcg_orm_module_table_mapping)
+#' @return Data frame with columns: table_name, column_name, udt_name
+#' @examples
+#' \dontrun{
+#' conn <- DBI::dbConnect(...)
+#' columns <- get_histogram_columns(conn, "gaia.cu7.algo.sos.CepheidAndRRLyrae")
+#' }
+#' @export
+get_histogram_mdb_columns <- function(conn, module) {
+  query <- sprintf("
+   WITH t AS (
+     SELECT '%s' table_name
+   ),
+   columns_to_histogram AS (
+     SELECT
+       c.table_name,
+       c.column_name,
+       c.udt_name
+     FROM information_schema.columns c
+     JOIN t USING(table_name)
+     WHERE c.column_name !~ 'runid|catalogid|sourceid|fstate|sostype|error|other'
+       AND c.udt_name ~ '^float|^int'
+       AND c.table_schema = current_schema()
+     ORDER BY c.table_name, c.column_name
+   )
+   SELECT * FROM columns_to_histogram
+ ", module)
+
+  dbGetQuery(conn, query)
+}
+
+
 #' Build Single-Pass Global Statistics Query for Parallel Execution
 #'
 #' Generates a SQL query that computes min, max, NaN count, and valid count
@@ -920,6 +961,7 @@ run_histogram_analysis <- function(inparams, runid, module,
                                    num_buckets = 20,
                                    join_clauses = NULL,
                                    default_join_clause = NULL,
+                                   columns_fn = get_histogram_columns,
                                    slack_user = "@nienarto",
                                    parallelism = 80,
                                    num_chunks = 600,
@@ -932,7 +974,7 @@ run_histogram_analysis <- function(inparams, runid, module,
   cat(sprintf("Using database user: %s\n\n", inparams$dbUser))
 
   # Get column metadata
-  columns_df <- get_histogram_columns(conn, module)
+  columns_df <- columns_fn(conn, module)
   cat(sprintf("Found %d columns across %d tables\n\n",
               nrow(columns_df), length(unique(columns_df$table_name))))
 

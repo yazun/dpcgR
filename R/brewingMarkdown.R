@@ -516,15 +516,26 @@ generate_histogram_plots <- function(hist_results,
     hist_df <- hist_results
   }
 
-  # Ensure numeric types
+  # Add hist_type if not present (backward compatibility)
+  if (!"hist_type" %in% names(hist_df)) {
+    hist_df$hist_type <- "numeric"
+  }
+  if (!"category_value" %in% names(hist_df)) {
+    hist_df$category_value <- NA_character_
+  }
+
+  # Ensure numeric types for numeric columns (skip for categorical)
+  numeric_cols <- c("bucket_avg", "global_min", "global_max")
+  for (nc in numeric_cols) {
+    if (nc %in% names(hist_df)) {
+      hist_df[[nc]] <- as.numeric(hist_df[[nc]])
+    }
+  }
   hist_df <- hist_df %>%
     mutate(
       freq = as.numeric(freq),
       nan_count = as.numeric(nan_count),
-      non_nan_count = as.numeric(non_nan_count),
-      bucket_avg = as.numeric(bucket_avg),
-      global_min = as.numeric(global_min),
-      global_max = as.numeric(global_max)
+      non_nan_count = as.numeric(non_nan_count)
     )
 
   # Helper function to determine if log scale should be used
@@ -636,13 +647,96 @@ generate_histogram_plots <- function(hist_results,
 
   cat(sprintf("Generating %d histogram plots...\n", nrow(table_col_combinations)))
 
-  # Generate all histograms
+  # Function to create categorical histogram for a single column
+  create_single_categorical <- function(data, tbl_name, col_name) {
+    df_subset <- data %>%
+      filter(table_name == !!tbl_name,
+             column_name == !!col_name)
+
+    if (nrow(df_subset) == 0) {
+      warning(sprintf("No data found for %s.%s", tbl_name, col_name))
+      return(NULL)
+    }
+
+    nan_count <- df_subset$nan_count[1]
+    non_nan_count <- df_subset$non_nan_count[1]
+
+    # Truncate long labels
+    df_subset <- df_subset %>%
+      arrange(freq) %>%
+      mutate(
+        display_label = ifelse(nchar(category_value) > 80,
+                                paste0(substr(category_value, 1, 77), "..."),
+                                category_value)
+      )
+
+    use_log_scale <- should_use_log_scale(df_subset)
+
+    fig <- plot_ly()
+
+    fig <- fig %>%
+      add_bars(
+        data = df_subset,
+        y = ~reorder(display_label, freq),
+        x = ~freq,
+        orientation = 'h',
+        name = 'Frequency',
+        marker = list(
+          color = bar_color,
+          line = list(color = line_color, width = 1)
+        ),
+        hovertemplate = paste(
+          '<b>%{customdata}</b><br>',
+          '<b>Frequency:</b> %{x}<br>',
+          '<extra></extra>'
+        ),
+        customdata = ~category_value
+      )
+
+    fig <- fig %>%
+      layout(
+        title = list(
+          text = paste0(
+            '<b>', col_name, '</b><br>',
+            '<sup>', tbl_name,
+            ' | Non-NULL: ', format(non_nan_count, big.mark = ','),
+            ' | NULL: ', format(nan_count, big.mark = ','), '</sup>'
+          ),
+          font = list(size = 16)
+        ),
+        xaxis = list(
+          title = 'Frequency',
+          type = if(use_log_scale) 'log' else 'linear'
+        ),
+        yaxis = list(
+          title = '',
+          categoryorder = 'total ascending'
+        ),
+        showlegend = FALSE,
+        margin = list(l = 200)
+      )
+
+    return(fig)
+  }
+
+  # Generate all histograms, dispatching by type
   histogram_list <- list()
   for (i in 1:nrow(table_col_combinations)) {
     tbl <- table_col_combinations$table_name[i]
     col <- table_col_combinations$column_name[i]
 
-    histogram_list[[i]] <- create_single_histogram(hist_df, tbl, col)
+    # Determine histogram type for this column
+    col_type <- hist_df %>%
+      filter(table_name == tbl, column_name == col) %>%
+      pull(hist_type) %>%
+      unique() %>%
+      `[`(1)
+
+    if (!is.null(col_type) && !is.na(col_type) && col_type == "categorical") {
+      histogram_list[[i]] <- create_single_categorical(hist_df, tbl, col)
+    } else {
+      histogram_list[[i]] <- create_single_histogram(hist_df, tbl, col)
+    }
   }
 
   # Add meaningful names to the list

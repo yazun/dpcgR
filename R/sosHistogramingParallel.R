@@ -254,6 +254,106 @@ get_histogram_mdb_columns <- function(conn, module, array_elements = 10) {
 }
 
 
+#' Get Text Columns for Categorical Histogram Generation
+#'
+#' Queries the database to find all text/categorical and boolean columns in
+#' tables belonging to the specified module, excluding system columns.
+#'
+#' @param conn DBI database connection
+#' @param module Module name to filter tables by (matched against dpcg_orm_module_table_mapping)
+#' @return List with two elements:
+#'   \itemize{
+#'     \item \code{columns}: Data frame with columns: table_name, column_name, udt_name, col_ref,
+#'       min_array_len, array_col.
+#'     \item \code{table_info}: Data frame with columns: table_name, has_runid, has_catalogid, has_sourceid.
+#'   }
+#' @export
+get_histogram_text_columns <- function(conn, module) {
+  query <- sprintf("
+   WITH t AS (
+     SELECT tbl.table_name
+     FROM dpcg_orm_module_table_mapping tbl
+     WHERE '%s' = ANY(tbl.modules)
+   ),
+   columns_to_histogram AS (
+     SELECT
+       c.table_name,
+       c.column_name,
+       c.udt_name
+     FROM information_schema.columns c
+     JOIN t USING(table_name)
+     WHERE c.column_name !~ 'runid|catalogid|sourceid|fstate|sostype|error|other|file_id|transfer_id'
+       AND c.udt_name IN ('text', 'varchar', 'bpchar', 'name', 'bool')
+       AND c.table_schema = current_schema()
+     ORDER BY c.table_name, c.column_name
+   )
+   SELECT * FROM columns_to_histogram
+ ", module)
+
+  raw_df <- dbGetQuery(conn, query)
+  if (nrow(raw_df) > 0) {
+    raw_df$col_ref <- raw_df$column_name
+    raw_df$min_array_len <- 0L
+    raw_df$array_col <- NA_character_
+  } else {
+    raw_df$col_ref <- character(0)
+    raw_df$min_array_len <- integer(0)
+    raw_df$array_col <- NA_character_
+  }
+  table_info <- detect_system_columns(conn, unique(raw_df$table_name))
+  list(columns = raw_df, table_info = table_info)
+}
+
+
+#' Get Text Columns for Categorical Histogram Generation (Single Table)
+#'
+#' Queries the database to find all text/categorical and boolean columns in
+#' a single table, excluding system columns.
+#'
+#' @param conn DBI database connection
+#' @param module Module name (table name) to query
+#' @return List with two elements:
+#'   \itemize{
+#'     \item \code{columns}: Data frame with columns: table_name, column_name, udt_name, col_ref,
+#'       min_array_len, array_col.
+#'     \item \code{table_info}: Data frame with columns: table_name, has_runid, has_catalogid, has_sourceid.
+#'   }
+#' @export
+get_histogram_mdb_text_columns <- function(conn, module) {
+  query <- sprintf("
+   WITH t AS (
+     SELECT '%s' table_name
+   ),
+   columns_to_histogram AS (
+     SELECT
+       c.table_name,
+       c.column_name,
+       c.udt_name
+     FROM information_schema.columns c
+     JOIN t USING(table_name)
+     WHERE c.column_name !~ 'runid|catalogid|sourceid|fstate|sostype|error|other|file_id|transfer_id'
+       AND c.udt_name IN ('text', 'varchar', 'bpchar', 'name', 'bool')
+       AND c.table_schema in (current_schema(),current_schema()||'_mdb')
+     ORDER BY c.table_name, c.column_name
+   )
+   SELECT * FROM columns_to_histogram
+ ", module)
+
+  raw_df <- dbGetQuery(conn, query)
+  if (nrow(raw_df) > 0) {
+    raw_df$col_ref <- raw_df$column_name
+    raw_df$min_array_len <- 0L
+    raw_df$array_col <- NA_character_
+  } else {
+    raw_df$col_ref <- character(0)
+    raw_df$min_array_len <- integer(0)
+    raw_df$array_col <- NA_character_
+  }
+  table_info <- detect_system_columns(conn, unique(raw_df$table_name))
+  list(columns = raw_df, table_info = table_info)
+}
+
+
 #' Build Single-Pass Global Statistics Query for Parallel Execution
 #'
 #' Generates a SQL query that computes min, max, NaN count, and valid count
@@ -889,6 +989,401 @@ ORDER BY table_name, column_name, bucket",
           partial_table_name)
 }
 
+#' Build Categorical Histogram Query for a Single Table
+#'
+#' Generates a SQL query that computes value frequency counts for all text
+#' columns in a table using a CTE and UNION ALL pattern. Used for categorical
+#' histogram generation via parallel execution.
+#'
+#' @param table_name Name of the table to query
+#' @param columns_df Data frame of text columns
+#' @param runid Run ID to filter data
+#' @param join_clause Optional SQL JOIN clause
+#' @param table_alias Alias for the main table when using join_clause (default "t")
+#' @param table_info Data frame with has_runid/has_catalogid/has_sourceid flags
+#' @return SQL query string, or NULL if no columns found
+#' @keywords internal
+build_categorical_histogram_query <- function(table_name, columns_df, runid,
+                                              join_clause = NULL, table_alias = "t",
+                                              table_info = NULL) {
+
+  table_cols <- columns_df[columns_df$table_name == table_name, ]
+  if (nrow(table_cols) == 0) return(NULL)
+
+  # Determine which system columns exist for this table
+  has_runid <- TRUE
+  has_catalogid <- TRUE
+  has_sourceid <- TRUE
+  if (!is.null(table_info)) {
+    ti <- table_info[table_info$table_name == table_name, ]
+    if (nrow(ti) > 0) {
+      has_runid <- ti$has_runid[1]
+      has_catalogid <- ti$has_catalogid[1]
+      has_sourceid <- ti$has_sourceid[1]
+    }
+  }
+
+  # Build FROM clause
+  if (!is.null(join_clause) && nzchar(join_clause)) {
+    from_clause <- sprintf("%s %s %s", table_name, table_alias, join_clause)
+    col_prefix <- sprintf("%s.", table_alias)
+    runid_ref <- sprintf("%s.runid", table_alias)
+    sourceid_ref <- sprintf("%s.sourceid", table_alias)
+  } else {
+    from_clause <- table_name
+    col_prefix <- ""
+    runid_ref <- "runid"
+    sourceid_ref <- "sourceid"
+  }
+
+  # Build column list for CTE
+  cte_cols <- paste(sprintf("%s%s", col_prefix, table_cols$column_name), collapse = ", ")
+
+  # Build WHERE clause conditionally based on available system columns
+  where_parts <- c()
+  if (has_runid) {
+    where_parts <- c(where_parts, sprintf("%s = %d", runid_ref, runid))
+  }
+  if (has_catalogid) {
+    where_parts <- c(where_parts, "catalogid = getmaincatalog()")
+  }
+  if (has_sourceid) {
+    where_parts <- c(where_parts, sprintf("%s = %s", sourceid_ref, sourceid_ref))
+  }
+
+  if (length(where_parts) > 0) {
+    cte <- sprintf("WITH base AS (\n SELECT %s\n FROM %s\n WHERE %s\n)",
+                   cte_cols, from_clause, paste(where_parts, collapse = " AND "))
+  } else {
+    cte <- sprintf("WITH base AS (\n SELECT %s\n FROM %s\n)",
+                   cte_cols, from_clause)
+  }
+
+  # Build UNION ALL of frequency queries for each column
+  union_parts <- sapply(seq_len(nrow(table_cols)), function(i) {
+    col_name <- table_cols$column_name[i]
+    sprintf("
+ SELECT
+   '%s'::TEXT AS column_name,
+   %s::TEXT AS category_value,
+   COUNT(*)::BIGINT AS freq,
+   0::BIGINT AS null_count
+ FROM base
+ WHERE %s IS NOT NULL
+ GROUP BY %s
+ UNION ALL
+ SELECT
+   '%s'::TEXT AS column_name,
+   '__NULL__'::TEXT AS category_value,
+   0::BIGINT AS freq,
+   COALESCE(COUNT(*) FILTER (WHERE %s IS NULL), 0)::BIGINT AS null_count
+ FROM base",
+            col_name, col_name, col_name, col_name,
+            col_name, col_name)
+  })
+
+  # Combine into final query
+  query <- sprintf("%s
+SELECT
+ '%s'::TEXT AS table_name,
+ column_name,
+ category_value,
+ freq,
+ null_count
+FROM (
+%s
+) all_columns",
+                   cte,
+                   table_name,
+                   paste(union_parts, collapse = "\n UNION ALL\n"))
+
+  return(query)
+}
+
+#' Build Aggregation Query for Categorical Histogram Results
+#'
+#' Generates a SQL query to aggregate categorical histogram results from
+#' parallel execution, summing frequencies across chunks.
+#'
+#' @param partial_table_name Name of the table containing partial results
+#' @return SQL query string
+#' @keywords internal
+build_categorical_aggregation_query <- function(partial_table_name) {
+  sprintf("
+SELECT
+ table_name,
+ column_name,
+ category_value,
+ SUM(freq)::BIGINT AS freq,
+ MAX(null_count)::BIGINT AS null_count
+FROM %s
+GROUP BY table_name, column_name, category_value
+ORDER BY table_name, column_name, freq DESC",
+          partial_table_name)
+}
+
+#' Collapse Categorical Histogram to Top N Values
+#'
+#' For each (table_name, column_name) group, keeps the top \code{max_categories}
+#' most frequent values and collapses the rest into an "Other" bucket.
+#' Removes the NULL sentinel row and extracts null counts separately.
+#'
+#' @param cat_hist_df Data frame with columns: table_name, column_name, category_value, freq, null_count
+#' @param max_categories Maximum number of category values to display (default 50)
+#' @return Data frame with columns: table_name, column_name, category_value, bucket, freq,
+#'   nan_count, non_nan_count, hist_type
+#' @keywords internal
+collapse_to_top_n <- function(cat_hist_df, max_categories = 50) {
+  if (nrow(cat_hist_df) == 0) {
+    return(data.frame(
+      table_name = character(0), column_name = character(0),
+      category_value = character(0), bucket = integer(0),
+      freq = numeric(0), nan_count = numeric(0), non_nan_count = numeric(0),
+      hist_type = character(0), stringsAsFactors = FALSE
+    ))
+  }
+
+  # Extract null counts (from __NULL__ sentinel rows)
+  null_counts <- cat_hist_df %>%
+    filter(category_value == "__NULL__") %>%
+    group_by(table_name, column_name) %>%
+    summarise(nan_count = sum(null_count), .groups = "drop")
+
+  # Work with non-null value rows only
+  values_df <- cat_hist_df %>%
+    filter(category_value != "__NULL__", freq > 0)
+
+  if (nrow(values_df) == 0) {
+    return(data.frame(
+      table_name = character(0), column_name = character(0),
+      category_value = character(0), bucket = integer(0),
+      freq = numeric(0), nan_count = numeric(0), non_nan_count = numeric(0),
+      hist_type = character(0), stringsAsFactors = FALSE
+    ))
+  }
+
+  # Rank by frequency and collapse tail into "Other"
+  result <- values_df %>%
+    group_by(table_name, column_name) %>%
+    arrange(desc(freq)) %>%
+    mutate(rank = row_number()) %>%
+    ungroup() %>%
+    mutate(
+      category_value = ifelse(rank <= max_categories, category_value, "Other"),
+      bucket = ifelse(rank <= max_categories, as.integer(rank), max_categories + 1L)
+    ) %>%
+    group_by(table_name, column_name, category_value, bucket) %>%
+    summarise(freq = sum(freq), .groups = "drop") %>%
+    # Re-rank after collapsing Other
+    group_by(table_name, column_name) %>%
+    arrange(desc(freq)) %>%
+    mutate(bucket = row_number()) %>%
+    ungroup()
+
+  # Compute non_nan_count per column
+  non_nan_totals <- result %>%
+    group_by(table_name, column_name) %>%
+    summarise(non_nan_count = sum(freq), .groups = "drop")
+
+  # Join null counts and totals
+  result <- result %>%
+    left_join(null_counts, by = c("table_name", "column_name")) %>%
+    left_join(non_nan_totals, by = c("table_name", "column_name")) %>%
+    mutate(
+      nan_count = ifelse(is.na(nan_count), 0, nan_count),
+      non_nan_count = ifelse(is.na(non_nan_count), 0, non_nan_count),
+      hist_type = "categorical"
+    )
+
+  return(result)
+}
+
+#' Build Categorical Histogram Scripts for All Tables
+#'
+#' Prepares categorical histogram queries and metadata for all tables.
+#'
+#' @param columns_df Data frame of text columns
+#' @param runid Run ID to filter data
+#' @param schema Output schema for histogram tables (default "dr4_ops_cs48_mv")
+#' @param join_clauses Named list of table-specific JOIN clauses
+#' @param default_join_clause Default JOIN clause for tables not in join_clauses
+#' @param table_info Data frame with system column flags
+#' @return Named list of script info, one entry per table
+#' @keywords internal
+build_categorical_scripts <- function(columns_df, runid,
+                                      schema = "dr4_ops_cs48_mv",
+                                      join_clauses = NULL,
+                                      default_join_clause = NULL,
+                                      table_info = NULL) {
+
+  tables <- unique(columns_df$table_name)
+  cat(sprintf("Building categorical histogram queries for %d tables...\n", length(tables)))
+
+  scripts <- list()
+
+  for (tbl in tables) {
+    tbl_cols <- columns_df[columns_df$table_name == tbl, ]
+    if (nrow(tbl_cols) == 0) next
+
+    if (!is.null(join_clauses) && tbl %in% names(join_clauses)) {
+      join_clause <- join_clauses[[tbl]]
+    } else {
+      join_clause <- default_join_clause
+    }
+
+    sql_query <- build_categorical_histogram_query(
+      table_name = tbl,
+      columns_df = columns_df,
+      runid = runid,
+      join_clause = join_clause,
+      table_info = table_info
+    )
+
+    if (is.null(sql_query)) next
+
+    # Check if this table supports parallel execution
+    tbl_has_sourceid <- TRUE
+    if (!is.null(table_info)) {
+      ti <- table_info[table_info$table_name == tbl, ]
+      if (nrow(ti) > 0) tbl_has_sourceid <- ti$has_sourceid[1]
+    }
+
+    output_table <- sprintf("%s.cat_hist_%s_%d", schema, sanitize_identifier(tbl, 45), runid)
+    n_cols <- nrow(tbl_cols)
+
+    scripts[[tbl]] <- list(
+      sql_query = sql_query,
+      source_table = tbl,
+      output_table = output_table,
+      n_columns = n_cols,
+      join_clause = join_clause,
+      has_sourceid = tbl_has_sourceid,
+      aggregation_query = build_categorical_aggregation_query(output_table)
+    )
+
+    cat(sprintf("  %s: %d text columns -> %s\n", tbl, n_cols, output_table))
+  }
+
+  return(scripts)
+}
+
+#' Execute Categorical Histogram Scripts
+#'
+#' Executes prepared categorical histogram scripts via partParalXZ4 and
+#' aggregates the partial results.
+#'
+#' @param scripts Named list of script info (from build_categorical_scripts)
+#' @param runid Run ID for partitioning
+#' @param db_user Database user for execution
+#' @param conn DBI database connection for aggregation
+#' @param slack_user Slack user for notifications (default "@nienarto")
+#' @param parallelism Number of parallel workers (default 80)
+#' @param num_chunks Number of data chunks (default 600)
+#' @param execute If TRUE, execute scripts; if FALSE, return scripts only
+#' @param debug If TRUE, print detailed debug output
+#' @return List with execution results and combined categorical histograms
+#' @keywords internal
+execute_categorical_scripts <- function(scripts, runid, db_user, conn = NULL,
+                                        slack_user = "@nienarto", parallelism = 80,
+                                        num_chunks = 600, execute = FALSE, debug = FALSE) {
+  results <- list()
+  all_histograms <- list()
+
+  for (i in seq_along(scripts)) {
+    script_info <- scripts[[i]]
+    tbl <- names(scripts)[i]
+
+    if (debug) {
+      cat(sprintf("\n=== CATEGORICAL TABLE %d/%d: %s ===\n", i, length(scripts), tbl))
+      cat(sprintf("Output table: %s\n", script_info$output_table))
+      cat(sprintf("Columns: %d\n", script_info$n_columns))
+      cat("\n--- Query (first 2000 chars) ---\n")
+      cat(substr(script_info$sql_query, 1, 2000))
+      if (nchar(script_info$sql_query) > 2000) cat("\n... [truncated]")
+      cat("\n==================\n\n")
+    }
+
+    if (execute) {
+      tbl_has_sourceid <- isTRUE(script_info$has_sourceid)
+
+      cat(sprintf("Executing categorical %d/%d: %s (%d columns)%s...\n",
+                  i, length(scripts), tbl, script_info$n_columns,
+                  if (!tbl_has_sourceid) " [direct - no sourceid]" else ""))
+
+      if (tbl_has_sourceid) {
+        exit_code <- execute_parallel_script(
+          runid = runid,
+          output_table = script_info$output_table,
+          sql_query = script_info$sql_query,
+          db_user = db_user,
+          slack_user = slack_user,
+          parallelism = parallelism,
+          num_chunks = num_chunks,
+          description = sprintf("CatHist %s", tbl)
+        )
+
+        if (exit_code != 0) {
+          warning(sprintf("Categorical script for %s failed with exit code %d", tbl, exit_code))
+          results[[tbl]] <- list(success = FALSE, exit_code = exit_code)
+        } else {
+          results[[tbl]] <- list(
+            success = TRUE,
+            source_table = tbl,
+            output_table = script_info$output_table,
+            n_columns = script_info$n_columns
+          )
+
+          if (!is.null(conn)) {
+            cat(sprintf("  Aggregating categorical results for %s...\n", tbl))
+            agg_result <- dbGetQuery(conn, script_info$aggregation_query)
+            results[[tbl]]$histogram_data <- agg_result
+            all_histograms[[tbl]] <- agg_result
+          }
+        }
+      } else {
+        # Direct execution for tables without sourceid
+        if (!is.null(conn)) {
+          direct_result <- tryCatch({
+            dbGetQuery(conn, script_info$sql_query)
+          }, error = function(e) {
+            warning(sprintf("Direct categorical query for %s failed: %s", tbl, e$message))
+            NULL
+          })
+
+          if (!is.null(direct_result) && nrow(direct_result) > 0) {
+            results[[tbl]] <- list(
+              success = TRUE,
+              source_table = tbl,
+              n_columns = script_info$n_columns,
+              histogram_data = direct_result
+            )
+            all_histograms[[tbl]] <- direct_result
+          } else {
+            results[[tbl]] <- list(success = FALSE, reason = "direct query returned no data")
+          }
+        } else {
+          warning(sprintf("Table %s has no sourceid and no conn for direct execution", tbl))
+          results[[tbl]] <- list(success = FALSE, reason = "no sourceid, no conn")
+        }
+      }
+    } else {
+      results[[tbl]] <- list(
+        sql_query = script_info$sql_query,
+        source_table = tbl,
+        output_table = script_info$output_table,
+        n_columns = script_info$n_columns,
+        aggregation_query = script_info$aggregation_query
+      )
+    }
+  }
+
+  if (execute && length(all_histograms) > 0) {
+    results$combined_categorical <- bind_rows(all_histograms)
+  }
+
+  return(results)
+}
+
 #' Execute Parallel Script via Piped Query
 #'
 #' Writes the SQL query to a temp file and pipes it to partParalXZ4 for
@@ -1161,44 +1656,66 @@ execute_histogram_scripts <- function(scripts, runid, db_user, conn = NULL,
 #' @return Data frame with additional boundary columns
 #' @export
 compute_bucket_boundaries <- function(histogram_df, num_buckets = 20) {
-  histogram_df %>%
-    mutate(
-      # Ensure numeric types (in case of integer64 from DB)
-      freq = as.numeric(freq),
-      nan_count = as.numeric(nan_count),
-      inf_count = as.numeric(inf_count),
-      non_nan_count = as.numeric(non_nan_count),
-      global_min = as.numeric(global_min),
-      global_max = as.numeric(global_max),
-      bucket_min = as.numeric(bucket_min),
-      bucket_max = as.numeric(bucket_max),
-      bucket_avg = as.numeric(bucket_avg)
-    ) %>%
-    group_by(table_name, column_name) %>%
-    mutate(
-      # Use actual bucket_min/bucket_max from SQL for accurate boundaries
-      bucket_lower = bucket_min,
-      bucket_upper = bucket_max,
-      bucket_center = (bucket_lower + bucket_upper) / 2,
-      bucket_width = bucket_upper - bucket_lower,
-      freq_pct = freq / sum(freq) * 100
-    ) %>%
-    ungroup()
+  # Add hist_type if not present (backward compatibility)
+  if (!"hist_type" %in% names(histogram_df)) {
+    histogram_df$hist_type <- "numeric"
+  }
+
+  # Split: only apply numeric boundary logic to numeric rows
+  numeric_df <- histogram_df %>% filter(hist_type == "numeric")
+  categorical_df <- histogram_df %>% filter(hist_type == "categorical")
+
+  if (nrow(numeric_df) > 0) {
+    numeric_df <- numeric_df %>%
+      mutate(
+        freq = as.numeric(freq),
+        nan_count = as.numeric(nan_count),
+        inf_count = as.numeric(inf_count),
+        non_nan_count = as.numeric(non_nan_count),
+        global_min = as.numeric(global_min),
+        global_max = as.numeric(global_max),
+        bucket_min = as.numeric(bucket_min),
+        bucket_max = as.numeric(bucket_max),
+        bucket_avg = as.numeric(bucket_avg)
+      ) %>%
+      group_by(table_name, column_name) %>%
+      mutate(
+        bucket_lower = bucket_min,
+        bucket_upper = bucket_max,
+        bucket_center = (bucket_lower + bucket_upper) / 2,
+        bucket_width = bucket_upper - bucket_lower,
+        freq_pct = freq / sum(freq) * 100
+      ) %>%
+      ungroup()
+  }
+
+  if (nrow(categorical_df) > 0) {
+    categorical_df <- categorical_df %>%
+      mutate(freq = as.numeric(freq)) %>%
+      group_by(table_name, column_name) %>%
+      mutate(freq_pct = freq / sum(freq) * 100) %>%
+      ungroup()
+  }
+
+  bind_rows(numeric_df, categorical_df)
 }
 
 #' Run Histogram Analysis
 #'
-#' Main workflow function for generating histograms of numeric columns in
-#' PostgreSQL tables using parallel execution. The analysis is performed
-#' in two phases:
+#' Main workflow function for generating histograms of numeric and categorical
+#' columns in PostgreSQL tables using parallel execution. The analysis is
+#' performed in three phases:
 #'
-#' 1. **Phase 1**: Compute global min/max statistics for all columns
+#' 1. **Phase 1**: Compute global min/max statistics for all numeric columns
 #'    using parallel execution via partParalXZ4, then aggregate results
 #' 2. **Phase 2**: Execute parallel bucketing queries using fixed global
 #'    boundaries via partParalXZ4
+#' 3. **Phase 3**: Compute categorical (text) column frequency distributions
+#'    via parallel GROUP BY, then collapse to top N values
 #'
-#' The two-phase approach ensures consistent bucket boundaries across all
-#' parallel chunks, allowing correct aggregation of partial results.
+#' The two-phase approach for numeric columns ensures consistent bucket
+#' boundaries across all parallel chunks. Categorical columns use a simpler
+#' single-phase approach with post-aggregation collapsing.
 #'
 #' @param inparams List with database connection parameters:
 #'   \itemize{
@@ -1216,6 +1733,10 @@ compute_bucket_boundaries <- function(histogram_df, num_buckets = 20) {
 #' @param array_elements Number of array elements to expand per array column (default 10).
 #'   For each array column, histograms are generated for elements 1 through \code{array_elements}
 #'   plus the array length. Elements beyond the actual array size are automatically filtered out.
+#' @param max_categories Maximum number of category values to show per text column (default 50).
+#'   Values beyond the top N are collapsed into an "Other" bucket.
+#' @param text_columns_fn Function to discover text columns (default get_histogram_text_columns).
+#'   Set to NULL to skip categorical histograms entirely.
 #' @param slack_user Slack user for notifications (default "@nienarto")
 #' @param parallelism Number of parallel workers for partParalXZ4 (default 80)
 #' @param num_chunks Number of data chunks for partParalXZ4 (default 600)
@@ -1224,8 +1745,9 @@ compute_bucket_boundaries <- function(histogram_df, num_buckets = 20) {
 #' @return List containing:
 #'   \itemize{
 #'     \item Per-table results with success status and histogram data
-#'     \item combined_histograms: All histograms in one data frame
-#'     \item histogram_for_viz: Combined histograms with computed bucket boundaries
+#'     \item combined_histograms: All numeric histograms in one data frame
+#'     \item combined_categorical: All categorical histograms in one data frame
+#'     \item histogram_for_viz: Combined numeric + categorical with computed boundaries
 #'     \item metadata: Analysis metadata (runid, module, num_buckets, etc.)
 #'   }
 #'
@@ -1274,6 +1796,8 @@ run_histogram_analysis <- function(inparams, runid, module,
                                    default_join_clause = NULL,
                                    columns_fn = get_histogram_columns,
                                    array_elements = 10,
+                                   max_categories = 50,
+                                   text_columns_fn = get_histogram_text_columns,
                                    slack_user = "@nienarto",
                                    parallelism = 80,
                                    num_chunks = 600,
@@ -1363,7 +1887,11 @@ run_histogram_analysis <- function(inparams, runid, module,
     )
 
     if (!is.null(results$combined_histograms) && nrow(results$combined_histograms) > 0) {
-      results$histogram_for_viz <- compute_bucket_boundaries(results$combined_histograms, num_buckets)
+      numeric_viz <- results$combined_histograms
+      numeric_viz$hist_type <- "numeric"
+      numeric_viz$category_value <- NA_character_
+    } else {
+      numeric_viz <- NULL
     }
   } else {
     results <- execute_histogram_scripts(
@@ -1373,6 +1901,98 @@ run_histogram_analysis <- function(inparams, runid, module,
       conn = NULL,
       execute = FALSE,
       debug = debug
+    )
+    numeric_viz <- NULL
+  }
+
+  # PHASE 3: Categorical (text) column histograms
+  cat_columns_df <- NULL
+  cat_table_info <- NULL
+  if (!is.null(text_columns_fn)) {
+    cat("\n=== PHASE 3: Categorical column histograms ===\n")
+    cat_col_result <- tryCatch(
+      text_columns_fn(conn, module),
+      error = function(e) {
+        if (debug) cat(sprintf("  Text column discovery failed: %s\n", e$message))
+        list(columns = data.frame(), table_info = NULL)
+      }
+    )
+
+    if (is.data.frame(cat_col_result)) {
+      cat_columns_df <- cat_col_result
+    } else {
+      cat_columns_df <- cat_col_result$columns
+      cat_table_info <- cat_col_result$table_info
+    }
+
+    if (!is.null(cat_columns_df) && nrow(cat_columns_df) > 0) {
+      cat(sprintf("Found %d text columns across %d tables\n\n",
+                  nrow(cat_columns_df), length(unique(cat_columns_df$table_name))))
+
+      cat_scripts <- build_categorical_scripts(
+        columns_df = cat_columns_df,
+        runid = runid,
+        schema = schema,
+        join_clauses = join_clauses,
+        default_join_clause = default_join_clause,
+        table_info = if (!is.null(cat_table_info)) cat_table_info else table_info
+      )
+      cat("\n")
+
+      if (execute) {
+        cat("Executing categorical histogram scripts...\n")
+        cat_results <- execute_categorical_scripts(
+          scripts = cat_scripts,
+          runid = runid,
+          db_user = inparams$dbUser,
+          conn = conn,
+          slack_user = slack_user,
+          parallelism = parallelism,
+          num_chunks = num_chunks,
+          execute = TRUE,
+          debug = debug
+        )
+
+        if (!is.null(cat_results$combined_categorical) &&
+            nrow(cat_results$combined_categorical) > 0) {
+          cat_viz <- collapse_to_top_n(cat_results$combined_categorical, max_categories)
+          results$combined_categorical <- cat_results$combined_categorical
+        } else {
+          cat_viz <- NULL
+        }
+      } else {
+        cat_results <- execute_categorical_scripts(
+          scripts = cat_scripts,
+          runid = runid,
+          db_user = inparams$dbUser,
+          conn = NULL,
+          execute = FALSE,
+          debug = debug
+        )
+        cat_viz <- NULL
+      }
+
+      # Store categorical script results
+      results$categorical_scripts <- cat_results
+    } else {
+      cat("No text columns found\n")
+      cat_viz <- NULL
+    }
+  } else {
+    cat_viz <- NULL
+  }
+
+  # Merge numeric and categorical into histogram_for_viz
+  viz_parts <- list()
+  if (!is.null(numeric_viz)) {
+    viz_parts <- c(viz_parts, list(numeric_viz))
+  }
+  if (!is.null(cat_viz) && nrow(cat_viz) > 0) {
+    viz_parts <- c(viz_parts, list(cat_viz))
+  }
+  if (length(viz_parts) > 0) {
+    results$histogram_for_viz <- compute_bucket_boundaries(
+      bind_rows(viz_parts), num_buckets
     )
   }
 
@@ -1384,8 +2004,10 @@ run_histogram_analysis <- function(inparams, runid, module,
     runid = runid,
     module = module,
     num_buckets = num_buckets,
+    max_categories = max_categories,
     n_tables = length(scripts),
     n_columns = nrow(columns_df),
+    n_text_columns = if (!is.null(cat_columns_df)) nrow(cat_columns_df) else 0,
     tables = names(scripts),
     global_stats = global_stats,
     db_user = inparams$dbUser

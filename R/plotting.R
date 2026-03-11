@@ -1650,6 +1650,106 @@ create_attribute_histogram <- function(data, table_col_combo) {
   return(fig)
 }
 
+#' Create Interactive Categorical Histogram
+#'
+#' Generates an interactive plotly horizontal bar chart for a categorical
+#' (text/boolean) column from pre-computed frequency data. Shows the top
+#' category values ranked by frequency with optional log scale.
+#'
+#' @param data Data frame containing categorical histogram data with columns:
+#'   \describe{
+#'     \item{table_name}{Character identifying the source database table}
+#'     \item{column_name}{Character identifying the column within the table}
+#'     \item{category_value}{Character value for each category}
+#'     \item{bucket}{Integer rank (1 = most frequent)}
+#'     \item{freq}{Numeric frequency count}
+#'     \item{nan_count}{Numeric count of NULL values}
+#'     \item{non_nan_count}{Numeric count of non-NULL values}
+#'     \item{hist_type}{Must be "categorical"}
+#'   }
+#' @param table_col_combo A list with elements:
+#'   \describe{
+#'     \item{table}{Character table name to filter}
+#'     \item{column}{Character column name to filter}
+#'   }
+#'
+#' @return A plotly object containing the interactive horizontal bar chart
+#' @export
+create_categorical_histogram <- function(data, table_col_combo) {
+
+  df_subset <- data %>%
+    filter(table_name == table_col_combo$table,
+           column_name == table_col_combo$column) %>%
+    arrange(freq)
+
+  if (nrow(df_subset) == 0) {
+    return(plot_ly() %>%
+             layout(title = list(
+               text = paste0('<b>', table_col_combo$column,
+                             '</b><br><sup>No data</sup>'))))
+  }
+
+  nan_count <- unique(df_subset$nan_count)[1]
+  non_nan_count <- unique(df_subset$non_nan_count)[1]
+
+  # Truncate long labels for display (keep full in hover)
+  df_subset <- df_subset %>%
+    mutate(
+      display_label = ifelse(nchar(category_value) > 80,
+                              paste0(substr(category_value, 1, 77), "..."),
+                              category_value)
+    )
+
+  # Determine if log scale is appropriate
+  use_log_scale <- should_use_log_scale(df_subset)
+  scale_text <- if (use_log_scale) " (Log Scale)" else " (Linear Scale)"
+
+  fig <- plot_ly()
+
+  fig <- fig %>%
+    add_bars(
+      data = df_subset,
+      y = ~reorder(display_label, freq),
+      x = ~freq,
+      orientation = 'h',
+      name = 'Frequency',
+      marker = list(color = 'rgba(55, 128, 191, 0.7)',
+                    line = list(color = 'rgba(55, 128, 191, 1.0)',
+                                width = 1)),
+      hovertemplate = paste(
+        '<b>%{customdata}</b><br>',
+        '<b>Frequency:</b> %{x}<br>',
+        '<extra></extra>'
+      ),
+      customdata = ~category_value
+    )
+
+  fig <- fig %>%
+    layout(
+      title = list(
+        text = paste0(
+          '<b>', table_col_combo$column, '</b><br>',
+          '<sup>', table_col_combo$table,
+          ' | Non-NULL: ', format(non_nan_count, big.mark = ','),
+          ' | NULL: ', format(nan_count, big.mark = ','), '</sup>'
+        ),
+        font = list(size = 16)
+      ),
+      xaxis = list(
+        title = paste0('Frequency', scale_text),
+        type = if(use_log_scale) 'log' else 'linear'
+      ),
+      yaxis = list(
+        title = '',
+        categoryorder = 'total ascending'
+      ),
+      showlegend = FALSE,
+      margin = list(l = 200)
+    )
+
+  return(fig)
+}
+
 #' Plot aitoff
 #'
 #' @param skyMapD Skymap dataframe

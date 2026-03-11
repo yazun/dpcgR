@@ -156,6 +156,56 @@ detect_system_columns <- function(conn, table_names, schemas = NULL) {
   return(merged)
 }
 
+#' Estimate Table Row Counts
+#'
+#' Uses PostgreSQL's \code{pg_class.reltuples} to get estimated row counts
+#' for a set of tables. This is fast (no table scan) and sufficiently accurate
+#' for deciding whether to use parallel execution.
+#'
+#' Note: For distributed tables (e.g., Citus), \code{reltuples} reports
+#' per-node counts. The \code{num_nodes} parameter multiplies the estimate
+#' to approximate the total across all data nodes.
+#'
+#' @param conn DBI database connection
+#' @param table_names Character vector of table names
+#' @param num_nodes Number of data nodes for distributed tables (default 6)
+#' @return Named numeric vector of estimated row counts, keyed by table_name
+#' @keywords internal
+estimate_table_rows <- function(conn, table_names, num_nodes = 6) {
+  if (length(table_names) == 0) return(setNames(numeric(0), character(0)))
+
+  tables_sql <- paste(sprintf("'%s'", table_names), collapse = ", ")
+  query <- sprintf("
+    SELECT c.relname AS table_name,
+           c.reltuples::BIGINT AS est_rows
+    FROM pg_class c
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE c.relname IN (%s)
+      AND n.nspname IN (current_schema(), current_schema()||'_mdb')
+    ORDER BY c.reltuples DESC
+  ", tables_sql)
+
+  result <- dbGetQuery(conn, query)
+
+  # De-duplicate: if same table_name in multiple schemas, take the max
+  if (nrow(result) > 0) {
+    result <- result %>%
+      group_by(table_name) %>%
+      summarise(est_rows = max(est_rows), .groups = "drop")
+  }
+
+  # Multiply by number of nodes for distributed table estimates
+  row_counts <- setNames(as.numeric(result$est_rows) * num_nodes, result$table_name)
+
+  # Ensure all requested tables are in the result (default 0 if not found)
+  missing <- setdiff(table_names, names(row_counts))
+  if (length(missing) > 0) {
+    row_counts[missing] <- 0
+  }
+
+  return(row_counts)
+}
+
 #' Get Numeric Columns for Histogram Generation
 #'
 #' Queries the database to find all numeric columns (float/int) in tables
@@ -669,18 +719,22 @@ compute_global_stats <- function(conn, columns_df, runid,
     query <- build_global_stats_query(tbl, columns_df, runid, join_clause,
                                        table_info = table_info)
 
-    # Check if this table has sourceid (required for parallel execution)
+    # Check if this table should use parallel execution
+    tbl_use_parallel <- TRUE
     tbl_has_sourceid <- TRUE
     if (!is.null(table_info)) {
       ti <- table_info[table_info$table_name == tbl, ]
-      if (nrow(ti) > 0) tbl_has_sourceid <- ti$has_sourceid[1]
+      if (nrow(ti) > 0) {
+        tbl_has_sourceid <- ti$has_sourceid[1]
+        tbl_use_parallel <- if ("use_parallel" %in% names(ti)) isTRUE(ti$use_parallel[1]) else tbl_has_sourceid
+      }
     }
 
     if (!is.null(query)) {
       n_cols <- sum(columns_df$table_name == tbl)
       cat(sprintf("  %s (%d columns)...\n", tbl, n_cols))
 
-      if (execute && !is.null(db_user) && tbl_has_sourceid) {
+      if (execute && !is.null(db_user) && tbl_use_parallel) {
         # Execute via parallel script (requires sourceid for partitioning)
         output_table <- sprintf("%s.stats_%s_%d", schema, sanitize_identifier(tbl, 50), runid)
 
@@ -727,6 +781,8 @@ compute_global_stats <- function(conn, columns_df, runid,
         if (debug) {
           if (!tbl_has_sourceid) {
             cat(sprintf("    Table %s has no sourceid - executing directly\n", tbl))
+          } else if (!tbl_use_parallel) {
+            cat(sprintf("    Table %s below parallel threshold - executing directly\n", tbl))
           }
           cat(sprintf("    Direct query (first 500 chars): %s...\n", substr(direct_query, 1, 500)))
         }
@@ -1302,11 +1358,13 @@ build_categorical_scripts <- function(columns_df, runid,
 
     if (is.null(sql_query)) next
 
-    # Check if this table supports parallel execution
-    tbl_has_sourceid <- TRUE
+    # Check if this table should use parallel execution
+    tbl_use_parallel <- TRUE
     if (!is.null(table_info)) {
       ti <- table_info[table_info$table_name == tbl, ]
-      if (nrow(ti) > 0) tbl_has_sourceid <- ti$has_sourceid[1]
+      if (nrow(ti) > 0) {
+        tbl_use_parallel <- if ("use_parallel" %in% names(ti)) isTRUE(ti$use_parallel[1]) else isTRUE(ti$has_sourceid[1])
+      }
     }
 
     output_table <- sprintf("%s.cat_hist_%s_%d", schema, sanitize_identifier(tbl, 45), runid)
@@ -1318,7 +1376,7 @@ build_categorical_scripts <- function(columns_df, runid,
       output_table = output_table,
       n_columns = n_cols,
       join_clause = join_clause,
-      has_sourceid = tbl_has_sourceid,
+      has_sourceid = tbl_use_parallel,
       aggregation_query = build_categorical_aggregation_query(output_table)
     )
 
@@ -1552,11 +1610,13 @@ build_histogram_scripts <- function(columns_df, global_stats, runid,
       join_clause <- default_join_clause
     }
 
-    # Check if this table supports parallel execution (requires sourceid)
-    tbl_has_sourceid <- TRUE
+    # Check if this table should use parallel execution
+    tbl_use_parallel <- TRUE
     if (!is.null(table_info)) {
       ti <- table_info[table_info$table_name == tbl, ]
-      if (nrow(ti) > 0) tbl_has_sourceid <- ti$has_sourceid[1]
+      if (nrow(ti) > 0) {
+        tbl_use_parallel <- if ("use_parallel" %in% names(ti)) isTRUE(ti$use_parallel[1]) else isTRUE(ti$has_sourceid[1])
+      }
     }
 
     n_cols <- nrow(tbl_cols)
@@ -1598,7 +1658,7 @@ build_histogram_scripts <- function(columns_df, global_stats, runid,
           output_table = output_table,
           n_columns = nrow(batch_columns_df),
           join_clause = join_clause,
-          has_sourceid = tbl_has_sourceid,
+          has_sourceid = tbl_use_parallel,
           aggregation_query = build_histogram_aggregation_query(output_table)
         )
 
@@ -1853,6 +1913,10 @@ compute_bucket_boundaries <- function(histogram_df, num_buckets = 20) {
 #' @param slack_user Slack user for notifications (default "@nienarto")
 #' @param parallelism Number of parallel workers for partParalXZ4 (default 80)
 #' @param num_chunks Number of data chunks for partParalXZ4 (default 600)
+#' @param min_parallel_rows Minimum estimated row count (across all nodes) for
+#'   a table to use parallel execution via partParalXZ4. Tables below this
+#'   threshold run as direct single queries. Default 10 million. Row counts
+#'   are estimated from pg_class.reltuples multiplied by 6 (data nodes).
 #' @param execute If TRUE, execute scripts; if FALSE, return scripts only (dry run)
 #' @param debug If TRUE, print detailed debug output
 #' @return List containing:
@@ -1914,6 +1978,7 @@ run_histogram_analysis <- function(inparams, runid, module,
                                    slack_user = "@nienarto",
                                    parallelism = 80,
                                    num_chunks = 600,
+                                   min_parallel_rows = 10e6,
                                    execute = FALSE,
                                    debug = FALSE) {
 
@@ -1949,12 +2014,27 @@ run_histogram_analysis <- function(inparams, runid, module,
   cat(sprintf("Found %d columns across %d tables\n\n",
               nrow(columns_df), length(unique(columns_df$table_name))))
 
-  if (!is.null(table_info) && debug) {
-    cat("Table system column info:\n")
+  # Estimate table sizes and decide parallel vs direct execution per table
+  all_tables <- unique(columns_df$table_name)
+  row_estimates <- estimate_table_rows(conn, all_tables)
+
+  if (!is.null(table_info)) {
+    # Add use_parallel flag: needs sourceid AND enough rows
+    table_info$use_parallel <- sapply(table_info$table_name, function(tbl) {
+      has_sid <- table_info$has_sourceid[table_info$table_name == tbl]
+      est <- row_estimates[tbl]
+      isTRUE(has_sid) && !is.na(est) && est >= min_parallel_rows
+    })
+
+    cat("Table execution plan:\n")
     for (r in seq_len(nrow(table_info))) {
       ti <- table_info[r, ]
-      cat(sprintf("  %s: runid=%s catalogid=%s sourceid=%s\n",
-                  ti$table_name, ti$has_runid, ti$has_catalogid, ti$has_sourceid))
+      est <- row_estimates[ti$table_name]
+      cat(sprintf("  %s: ~%s rows, sourceid=%s -> %s\n",
+                  ti$table_name,
+                  format(est, big.mark = ",", scientific = FALSE),
+                  ti$has_sourceid,
+                  if (isTRUE(ti$use_parallel)) "PARALLEL" else "DIRECT"))
     }
     cat("\n")
   }

@@ -2019,11 +2019,12 @@ run_histogram_analysis <- function(inparams, runid, module,
   row_estimates <- estimate_table_rows(conn, all_tables)
 
   if (!is.null(table_info)) {
-    # Add use_parallel flag: needs sourceid AND enough rows
+    # Add use_parallel flag: needs sourceid AND known row count above threshold
+    # When reltuples is 0 or unknown, default to direct (non-parallel) execution
     table_info$use_parallel <- sapply(table_info$table_name, function(tbl) {
       has_sid <- table_info$has_sourceid[table_info$table_name == tbl]
       est <- row_estimates[tbl]
-      isTRUE(has_sid) && !is.na(est) && est >= min_parallel_rows
+      isTRUE(has_sid) && !is.na(est) && est > 0 && est >= min_parallel_rows
     })
 
     cat("Table execution plan:\n")

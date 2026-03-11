@@ -354,12 +354,13 @@ get_histogram_mdb_text_columns <- function(conn, module) {
 }
 
 
-#' Build Single-Pass Global Statistics Query for Parallel Execution
+#' Build Global Statistics Query Using CTE + UNION ALL
 #'
 #' Generates a SQL query that computes min, max, NaN count, and valid count
-#' for all numeric columns in a table. Uses COALESCE to ensure non-NULL values
-#' are always returned (required for partParalXZ4 table creation).
-#' Conditionally includes runid/catalogid/sourceid filters based on table_info.
+#' for all numeric columns in a table. Uses a CTE for the base data and
+#' UNION ALL to produce one row per column (long format), avoiding PostgreSQL's
+#' 1664 target list limit that occurs with wide-format queries on tables with
+#' many array-expanded columns.
 #'
 #' @param table_name Name of the table to query
 #' @param columns_df Data frame of columns (from get_histogram_columns)
@@ -403,51 +404,29 @@ build_global_stats_query <- function(table_name, columns_df, runid,
     sourceid_ref <- "sourceid"
   }
 
-  # Build SELECT expressions for ALL columns in a single pass
-  # Use COALESCE to ensure non-NULL values even when no data matches
-  # This prevents "null value violates not-null constraint" errors
-  # when partParalXZ4 creates the output table
-  select_parts <- sapply(seq_len(nrow(table_cols)), function(i) {
-    col <- table_cols[i, ]
-    col_name <- col$column_name
-    col_ref <- paste0(col_prefix, col$col_ref)
-
-    # Build cardinality filter for array element columns
-    ef <- ""
-    if (!is.na(col$array_col) && col$min_array_len > 0) {
-      ef <- sprintf("cardinality(%s%s) >= %d AND ",
-                     col_prefix, col$array_col, col$min_array_len)
-    }
-
-    if (grepl("^float", col$udt_name)) {
-      # For float columns: filter out NaN, Inf, and NULL, use COALESCE for empty results
-      # Use 'NaN'::float8 as default for min/max to indicate "no valid data"
-      sprintf("
-   COALESCE(min(%s) FILTER (WHERE %s%s IS NOT NULL AND %s != 'NaN'::float8 AND %s != 'Infinity'::float8 AND %s != '-Infinity'::float8), 'NaN'::float8) AS %s_min,
-   COALESCE(max(%s) FILTER (WHERE %s%s IS NOT NULL AND %s != 'NaN'::float8 AND %s != 'Infinity'::float8 AND %s != '-Infinity'::float8), 'NaN'::float8) AS %s_max,
-   COALESCE(count(*) FILTER (WHERE %s%s = 'NaN'::float8), 0) AS %s_nan,
-   COALESCE(count(*) FILTER (WHERE %s(%s = 'Infinity'::float8 OR %s = '-Infinity'::float8)), 0) AS %s_inf,
-   COALESCE(count(*) FILTER (WHERE %s%s IS NOT NULL AND %s != 'NaN'::float8 AND %s != 'Infinity'::float8 AND %s != '-Infinity'::float8), 0) AS %s_valid",
-              col_ref, ef, col_ref, col_ref, col_ref, col_ref, col_name,
-              col_ref, ef, col_ref, col_ref, col_ref, col_ref, col_name,
-              ef, col_ref, col_name,
-              ef, col_ref, col_ref, col_name,
-              ef, col_ref, col_ref, col_ref, col_ref, col_name)
+  # Build column list for CTE — include all columns needed for stats
+  cte_parts <- sapply(seq_len(nrow(table_cols)), function(i) {
+    ref_expr <- paste0(col_prefix, table_cols$col_ref[i])
+    col_name <- table_cols$column_name[i]
+    if (table_cols$col_ref[i] != col_name) {
+      sprintf("%s AS %s", ref_expr, col_name)
     } else {
-      # For integer columns: no NaN or Inf possible, just filter NULL
-      sprintf("
-   COALESCE(min(%s) FILTER (WHERE %s%s IS NOT NULL), 0) AS %s_min,
-   COALESCE(max(%s) FILTER (WHERE %s%s IS NOT NULL), 0) AS %s_max,
-   0::bigint AS %s_nan,
-   0::bigint AS %s_inf,
-   COALESCE(count(*) FILTER (WHERE %s%s IS NOT NULL), 0) AS %s_valid",
-              col_ref, ef, col_ref, col_name,
-              col_ref, ef, col_ref, col_name,
-              col_name,
-              col_name,
-              ef, col_ref, col_name)
+      ref_expr
     }
   })
+
+  # Ensure cardinality columns are in CTE for array element filtering
+  array_cols_needed <- unique(na.omit(
+    table_cols$array_col[table_cols$min_array_len > 0]
+  ))
+  for (ac in array_cols_needed) {
+    len_name <- paste0(ac, "_len")
+    if (!(len_name %in% table_cols$column_name)) {
+      cte_parts <- c(cte_parts,
+                      sprintf("cardinality(%s%s) AS %s", col_prefix, ac, len_name))
+    }
+  }
+  col_list <- paste(cte_parts, collapse = ", ")
 
   # Build WHERE clause conditionally based on available system columns
   where_parts <- c()
@@ -463,66 +442,138 @@ build_global_stats_query <- function(table_name, columns_df, runid,
   }
 
   if (length(where_parts) > 0) {
-    query <- sprintf("SELECT %s\nFROM %s\nWHERE %s",
-                     paste(select_parts, collapse = ","),
-                     from_clause,
-                     paste(where_parts, collapse = " AND "))
+    cte <- sprintf("WITH base AS (\n SELECT %s\n FROM %s\n WHERE %s\n)",
+                   col_list, from_clause, paste(where_parts, collapse = " AND "))
   } else {
-    query <- sprintf("SELECT %s\nFROM %s",
-                     paste(select_parts, collapse = ","),
-                     from_clause)
+    cte <- sprintf("WITH base AS (\n SELECT %s\n FROM %s\n)",
+                   col_list, from_clause)
   }
 
-  return(query)
-}
-#' Build Aggregation Query for Partial Global Statistics
-#'
-#' Generates a SQL query to aggregate partial min/max/count results from
-#' parallel execution. Filters out NaN placeholder values used for empty chunks.
-#'
-#' @param partial_table_name Name of the table containing partial results
-#' @param columns_df Data frame of columns (from get_histogram_columns)
-#' @param table_name Name of the source table (to filter columns_df)
-#' @return SQL query string
-#' @keywords internal
-build_global_stats_aggregation_query <- function(partial_table_name, columns_df, table_name) {
+  # Build UNION ALL of stats queries — one per column (long format output)
+  # This avoids PG's 1664 target list limit that wide-format hits with many columns
+  union_parts <- sapply(seq_len(nrow(table_cols)), function(i) {
+    col <- table_cols[i, ]
+    col_name <- col$column_name
+    col_ref <- col_name  # Already aliased in CTE
 
-  table_cols <- columns_df[columns_df$table_name == table_name, ]
+    # Build cardinality filter for array element columns
+    extra_where <- ""
+    if (!is.na(col$array_col) && col$min_array_len > 0) {
+      extra_where <- sprintf("%s_len >= %d AND ", col$array_col, col$min_array_len)
+    }
 
-  # Build SELECT expressions that aggregate partial results
-  # Filter out NaN values (used as placeholders for empty chunks)
-  select_parts <- sapply(seq_len(nrow(table_cols)), function(i) {
-    col_name <- table_cols$column_name[i]
-    sprintf("
-   min(NULLIF(%s_min, 'NaN'::float8)) AS %s_min,
-   max(NULLIF(%s_max, 'NaN'::float8)) AS %s_max,
-   COALESCE(sum(%s_nan), 0)::bigint AS %s_nan,
-   COALESCE(sum(%s_inf), 0)::bigint AS %s_inf,
-   COALESCE(sum(%s_valid), 0)::bigint AS %s_valid",
-            col_name, col_name,
-            col_name, col_name,
-            col_name, col_name,
-            col_name, col_name,
-            col_name, col_name)
+    if (grepl("^float", col$udt_name)) {
+      sprintf("
+ SELECT
+   '%s'::TEXT AS column_name,
+   COALESCE(min(%s) FILTER (WHERE %s%s IS NOT NULL AND %s != 'NaN'::float8 AND %s != 'Infinity'::float8 AND %s != '-Infinity'::float8), 'NaN'::float8)::NUMERIC AS global_min,
+   COALESCE(max(%s) FILTER (WHERE %s%s IS NOT NULL AND %s != 'NaN'::float8 AND %s != 'Infinity'::float8 AND %s != '-Infinity'::float8), 'NaN'::float8)::NUMERIC AS global_max,
+   COALESCE(count(*) FILTER (WHERE %s%s = 'NaN'::float8), 0)::BIGINT AS nan_count,
+   COALESCE(count(*) FILTER (WHERE %s(%s = 'Infinity'::float8 OR %s = '-Infinity'::float8)), 0)::BIGINT AS inf_count,
+   COALESCE(count(*) FILTER (WHERE %s%s IS NOT NULL AND %s != 'NaN'::float8 AND %s != 'Infinity'::float8 AND %s != '-Infinity'::float8), 0)::BIGINT AS non_nan_count
+ FROM base",
+              col_name,
+              col_ref, extra_where, col_ref, col_ref, col_ref, col_ref,
+              col_ref, extra_where, col_ref, col_ref, col_ref, col_ref,
+              extra_where, col_ref,
+              extra_where, col_ref, col_ref,
+              extra_where, col_ref, col_ref, col_ref, col_ref)
+    } else {
+      sprintf("
+ SELECT
+   '%s'::TEXT AS column_name,
+   COALESCE(min(%s) FILTER (WHERE %s%s IS NOT NULL), 0)::NUMERIC AS global_min,
+   COALESCE(max(%s) FILTER (WHERE %s%s IS NOT NULL), 0)::NUMERIC AS global_max,
+   0::BIGINT AS nan_count,
+   0::BIGINT AS inf_count,
+   COALESCE(count(*) FILTER (WHERE %s%s IS NOT NULL), 0)::BIGINT AS non_nan_count
+ FROM base",
+              col_name,
+              col_ref, extra_where, col_ref,
+              col_ref, extra_where, col_ref,
+              extra_where, col_ref)
+    }
   })
 
-  query <- sprintf("SELECT %s\nFROM %s",
-                   paste(select_parts, collapse = ","),
-                   partial_table_name)
+  # Wrap in final query with table_name column
+  query <- sprintf("%s
+SELECT
+ '%s'::TEXT AS table_name,
+ column_name,
+ global_min,
+ global_max,
+ nan_count,
+ inf_count,
+ non_nan_count
+FROM (
+%s
+) all_columns",
+                   cte,
+                   table_name,
+                   paste(union_parts, collapse = "\n UNION ALL\n"))
 
   return(query)
 }
 
-#' Pivot Wide Statistics Result to Long Format
+#' Build Aggregation Query for Partial Global Statistics
 #'
-#' Converts the wide-format result from build_global_stats_query (one row with
-#' columns like col1_min, col1_max, col2_min, ...) to long format (one row per column).
-#' Sanitizes Inf, -Inf, and NaN values to prevent downstream issues.
+#' Generates a SQL query to aggregate partial global statistics results from
+#' parallel execution. Aggregates long-format rows (one per column per chunk)
+#' by taking min of mins, max of maxes, and sum of counts.
 #'
-#' @param stats_wide Wide-format data frame from database query
-#' @param table_name Name of the source table
-#' @param columns_df Data frame of columns (from get_histogram_columns)
-#' @return Data frame with columns: table_name, column_name, global_min, global_max, nan_count, inf_count, non_nan_count
+#' @param partial_table_name Name of the table containing partial results
+#' @return SQL query string
+#' @keywords internal
+build_global_stats_aggregation_query <- function(partial_table_name) {
+
+  sprintf("
+SELECT
+ table_name,
+ column_name,
+ min(NULLIF(global_min, 'NaN'::NUMERIC))::NUMERIC AS global_min,
+ max(NULLIF(global_max, 'NaN'::NUMERIC))::NUMERIC AS global_max,
+ COALESCE(sum(nan_count), 0)::BIGINT AS nan_count,
+ COALESCE(sum(inf_count), 0)::BIGINT AS inf_count,
+ COALESCE(sum(non_nan_count), 0)::BIGINT AS non_nan_count
+FROM %s
+GROUP BY table_name, column_name
+ORDER BY table_name, column_name",
+          partial_table_name)
+}
+
+#' Sanitize Statistics Data Frame
+#'
+#' Converts integer64 values to numeric and sanitizes Inf/NaN/NA values
+#' in global statistics results. Used after both parallel and direct execution.
+#'
+#' @param stats_df Data frame with columns: table_name, column_name,
+#'   global_min, global_max, nan_count, inf_count, non_nan_count
+#' @return Sanitized data frame
+#' @keywords internal
+sanitize_stats_df <- function(stats_df) {
+  if (nrow(stats_df) == 0) return(stats_df)
+
+  # Convert integer64 to numeric
+  stats_df <- stats_df %>%
+    mutate(across(where(bit64::is.integer64), as.numeric))
+
+  # Sanitize numeric values
+  sanitize_value <- function(x, default = NA_real_) {
+    x <- as.numeric(x)
+    ifelse(is.na(x) | is.nan(x) | is.infinite(x), default, x)
+  }
+
+  stats_df %>%
+    mutate(
+      global_min = sanitize_value(global_min),
+      global_max = sanitize_value(global_max),
+      nan_count = sanitize_value(nan_count, default = 0),
+      inf_count = sanitize_value(inf_count, default = 0),
+      non_nan_count = sanitize_value(non_nan_count, default = 0)
+    )
+}
+
+#' @describeIn pivot_stats_to_long Kept for backward compatibility
 #' @keywords internal
 pivot_stats_to_long <- function(stats_wide, table_name, columns_df) {
   table_cols <- columns_df[columns_df$table_name == table_name, ]
@@ -645,12 +696,12 @@ compute_global_stats <- function(conn, columns_df, runid,
           next
         }
 
-        # Aggregate partial results from parallel execution
-        agg_query <- build_global_stats_aggregation_query(output_table, columns_df, tbl)
+        # Aggregate partial results from parallel execution (long format)
+        agg_query <- build_global_stats_aggregation_query(output_table)
         if (debug) {
           cat(sprintf("    Aggregation query: %s\n", agg_query))
         }
-        stats_wide <- dbGetQuery(conn, agg_query)
+        stats_long <- dbGetQuery(conn, agg_query)
 
         # Drop the temporary partial results table
         tryCatch({
@@ -670,10 +721,11 @@ compute_global_stats <- function(conn, columns_df, runid,
           }
           cat(sprintf("    Direct query (first 500 chars): %s...\n", substr(direct_query, 1, 500)))
         }
-        stats_wide <- dbGetQuery(conn, direct_query)
+        stats_long <- dbGetQuery(conn, direct_query)
       }
 
-      stats_long <- pivot_stats_to_long(stats_wide, tbl, columns_df)
+      # Sanitize stats (integer64 conversion, NaN/Inf handling)
+      stats_long <- sanitize_stats_df(stats_long)
       all_stats[[tbl]] <- stats_long
     }
   }
@@ -1470,6 +1522,11 @@ build_histogram_scripts <- function(columns_df, global_stats, runid,
   valid_columns_df <- columns_df %>%
     semi_join(valid_stats, by = c("table_name", "column_name"))
 
+  # PostgreSQL limit: 1664 target list entries. CTE selects 1 per column plus
+
+  # cardinality helpers. Use 1500 as safe batch limit to leave room for extras.
+  max_cte_columns <- 1500
+
   scripts <- list()
 
   for (tbl in tables) {
@@ -1486,18 +1543,6 @@ build_histogram_scripts <- function(columns_df, global_stats, runid,
       join_clause <- default_join_clause
     }
 
-    sql_query <- build_table_histogram_query(
-      table_name = tbl,
-      columns_df = valid_columns_df,
-      global_stats = valid_stats,
-      runid = runid,
-      num_buckets = num_buckets,
-      join_clause = join_clause,
-      table_info = table_info
-    )
-
-    if (is.null(sql_query)) next
-
     # Check if this table supports parallel execution (requires sourceid)
     tbl_has_sourceid <- TRUE
     if (!is.null(table_info)) {
@@ -1505,20 +1550,79 @@ build_histogram_scripts <- function(columns_df, global_stats, runid,
       if (nrow(ti) > 0) tbl_has_sourceid <- ti$has_sourceid[1]
     }
 
-    output_table <- sprintf("%s.hist_%s_%d", schema, sanitize_identifier(tbl, 50), runid)
     n_cols <- nrow(tbl_cols)
 
-    scripts[[tbl]] <- list(
-      sql_query = sql_query,
-      source_table = tbl,
-      output_table = output_table,
-      n_columns = n_cols,
-      join_clause = join_clause,
-      has_sourceid = tbl_has_sourceid,
-      aggregation_query = build_histogram_aggregation_query(output_table)
-    )
+    # Split into batches if too many columns for a single CTE
+    if (n_cols > max_cte_columns) {
+      n_batches <- ceiling(n_cols / max_cte_columns)
+      cat(sprintf("  %s: %d columns exceeds CTE limit, splitting into %d batches\n",
+                  tbl, n_cols, n_batches))
 
-    cat(sprintf("  %s: %d valid columns -> %s\n", tbl, n_cols, output_table))
+      batch_indices <- split(seq_len(n_cols), ceiling(seq_len(n_cols) / max_cte_columns))
+
+      for (b in seq_along(batch_indices)) {
+        batch_col_names <- tbl_cols$column_name[batch_indices[[b]]]
+        batch_columns_df <- valid_columns_df %>%
+          filter(table_name == tbl, column_name %in% batch_col_names)
+        batch_stats <- valid_stats %>%
+          filter(table_name == tbl, column_name %in% batch_col_names)
+
+        sql_query <- build_table_histogram_query(
+          table_name = tbl,
+          columns_df = batch_columns_df,
+          global_stats = batch_stats,
+          runid = runid,
+          num_buckets = num_buckets,
+          join_clause = join_clause,
+          table_info = table_info
+        )
+
+        if (is.null(sql_query)) next
+
+        batch_key <- sprintf("%s__batch%d", tbl, b)
+        output_table <- sprintf("%s.hist_%s_b%d_%d", schema,
+                                 sanitize_identifier(tbl, 40), b, runid)
+
+        scripts[[batch_key]] <- list(
+          sql_query = sql_query,
+          source_table = tbl,
+          output_table = output_table,
+          n_columns = nrow(batch_columns_df),
+          join_clause = join_clause,
+          has_sourceid = tbl_has_sourceid,
+          aggregation_query = build_histogram_aggregation_query(output_table)
+        )
+
+        cat(sprintf("  %s [batch %d/%d]: %d columns -> %s\n",
+                    tbl, b, n_batches, nrow(batch_columns_df), output_table))
+      }
+    } else {
+      sql_query <- build_table_histogram_query(
+        table_name = tbl,
+        columns_df = valid_columns_df,
+        global_stats = valid_stats,
+        runid = runid,
+        num_buckets = num_buckets,
+        join_clause = join_clause,
+        table_info = table_info
+      )
+
+      if (is.null(sql_query)) next
+
+      output_table <- sprintf("%s.hist_%s_%d", schema, sanitize_identifier(tbl, 50), runid)
+
+      scripts[[tbl]] <- list(
+        sql_query = sql_query,
+        source_table = tbl,
+        output_table = output_table,
+        n_columns = n_cols,
+        join_clause = join_clause,
+        has_sourceid = tbl_has_sourceid,
+        aggregation_query = build_histogram_aggregation_query(output_table)
+      )
+
+      cat(sprintf("  %s: %d valid columns -> %s\n", tbl, n_cols, output_table))
+    }
   }
 
   return(scripts)
@@ -1808,6 +1912,13 @@ run_histogram_analysis <- function(inparams, runid, module,
 
   cat(sprintf("=== HISTOGRAM ANALYSIS FOR MODULE '%s', RUNID %d ===\n\n", module, runid))
   cat(sprintf("Using database user: %s\n\n", inparams$dbUser))
+
+  # Auto-select matching text columns function if using mdb numeric variant
+  if (identical(text_columns_fn, get_histogram_text_columns) &&
+      identical(columns_fn, get_histogram_mdb_columns)) {
+    text_columns_fn <- get_histogram_mdb_text_columns
+    cat("Auto-selected get_histogram_mdb_text_columns for MDB mode\n\n")
+  }
 
   # Get column metadata and system column info
   # Pass array_elements if columns_fn accepts it (our built-in functions do)

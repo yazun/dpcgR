@@ -1686,7 +1686,7 @@ build_histogram_scripts <- function(columns_df, global_stats, runid,
         output_table = output_table,
         n_columns = n_cols,
         join_clause = join_clause,
-        has_sourceid = tbl_has_sourceid,
+        has_sourceid = tbl_use_parallel,
         aggregation_query = build_histogram_aggregation_query(output_table)
       )
 

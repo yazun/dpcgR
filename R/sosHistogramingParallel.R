@@ -1887,7 +1887,8 @@ run_histogram_analysis <- function(inparams, runid, module,
     )
 
     if (!is.null(results$combined_histograms) && nrow(results$combined_histograms) > 0) {
-      numeric_viz <- results$combined_histograms
+      numeric_viz <- results$combined_histograms %>%
+        mutate(across(where(bit64::is.integer64), as.numeric))
       numeric_viz$hist_type <- "numeric"
       numeric_viz$category_value <- NA_character_
     } else {
@@ -1955,7 +1956,9 @@ run_histogram_analysis <- function(inparams, runid, module,
 
         if (!is.null(cat_results$combined_categorical) &&
             nrow(cat_results$combined_categorical) > 0) {
-          cat_viz <- collapse_to_top_n(cat_results$combined_categorical, max_categories)
+          cat_combined <- cat_results$combined_categorical %>%
+            mutate(across(where(bit64::is.integer64), as.numeric))
+          cat_viz <- collapse_to_top_n(cat_combined, max_categories)
           results$combined_categorical <- cat_results$combined_categorical
         } else {
           cat_viz <- NULL

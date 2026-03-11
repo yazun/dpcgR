@@ -110,7 +110,7 @@ expand_array_columns <- function(columns_df, n = 10) {
 #' @param table_names Character vector of table names to check
 #' @return Data frame with columns: table_name, has_runid, has_catalogid, has_sourceid
 #' @keywords internal
-detect_system_columns <- function(conn, table_names) {
+detect_system_columns <- function(conn, table_names, schemas = NULL) {
   if (length(table_names) == 0) {
     return(data.frame(
       table_name = character(0),
@@ -122,6 +122,15 @@ detect_system_columns <- function(conn, table_names) {
   }
 
   tables_sql <- paste(sprintf("'%s'", table_names), collapse = ", ")
+
+  # Build schema filter — check current_schema() plus any additional schemas
+  if (!is.null(schemas) && length(schemas) > 0) {
+    schema_sql <- paste(sprintf("'%s'", schemas), collapse = ", ")
+    schema_filter <- sprintf("c.table_schema IN (current_schema(), %s)", schema_sql)
+  } else {
+    schema_filter <- "c.table_schema IN (current_schema(), current_schema()||'_mdb')"
+  }
+
   query <- sprintf("
     SELECT
       c.table_name,
@@ -130,10 +139,10 @@ detect_system_columns <- function(conn, table_names) {
       bool_or(c.column_name = 'sourceid') AS has_sourceid
     FROM information_schema.columns c
     WHERE c.table_name IN (%s)
-      AND c.table_schema = current_schema()
+      AND %s
       AND c.column_name IN ('runid', 'catalogid', 'sourceid')
     GROUP BY c.table_name
-  ", tables_sql)
+  ", tables_sql, schema_filter)
 
   result <- dbGetQuery(conn, query)
 

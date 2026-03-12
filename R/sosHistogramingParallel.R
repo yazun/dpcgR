@@ -855,10 +855,10 @@ build_column_bucket_select <- function(column_name, udt_name, global_min, global
                                        nan_count, inf_count, non_nan_count, num_buckets,
                                        col_ref, table_name, extra_where = "") {
 
-  # Sanitize inputs
-  nan_count <- as.integer(ifelse(is.na(nan_count) | is.nan(nan_count), 0, nan_count))
-  inf_count <- as.integer(ifelse(is.na(inf_count) | is.nan(inf_count), 0, inf_count))
-  non_nan_count <- as.integer(ifelse(is.na(non_nan_count) | is.nan(non_nan_count), 0, non_nan_count))
+  # Sanitize inputs — use as.numeric (not as.integer) to avoid overflow on large counts
+  nan_count <- as.numeric(ifelse(is.na(nan_count) | is.nan(nan_count), 0, nan_count))
+  inf_count <- as.numeric(ifelse(is.na(inf_count) | is.nan(inf_count), 0, inf_count))
+  non_nan_count <- as.numeric(ifelse(is.na(non_nan_count) | is.nan(non_nan_count), 0, non_nan_count))
 
   is_float <- grepl("^float", udt_name)
   is_int <- grepl("^int", udt_name)
@@ -916,9 +916,9 @@ build_column_bucket_select <- function(column_name, udt_name, global_min, global
    avg(%s)::NUMERIC AS bucket_avg,
    %.17g::NUMERIC AS global_min,
    %.17g::NUMERIC AS global_max,
-   %d::BIGINT AS nan_count,
-   %d::BIGINT AS inf_count,
-   %d::BIGINT AS non_nan_count
+   %.0f::BIGINT AS nan_count,
+   %.0f::BIGINT AS inf_count,
+   %.0f::BIGINT AS non_nan_count
  FROM base
  WHERE %s",
                            column_name,
@@ -938,9 +938,9 @@ build_column_bucket_select <- function(column_name, udt_name, global_min, global
    avg(%s)::NUMERIC AS bucket_avg,
    %.17g::NUMERIC AS global_min,
    %.17g::NUMERIC AS global_max,
-   %d::BIGINT AS nan_count,
-   %d::BIGINT AS inf_count,
-   %d::BIGINT AS non_nan_count
+   %.0f::BIGINT AS nan_count,
+   %.0f::BIGINT AS inf_count,
+   %.0f::BIGINT AS non_nan_count
  FROM base
  WHERE %s
  GROUP BY width_bucket(%s, %.17g::float8, %.17g::float8, %d)",

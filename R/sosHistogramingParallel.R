@@ -1618,10 +1618,9 @@ build_histogram_scripts <- function(columns_df, global_stats, runid,
   valid_columns_df <- columns_df %>%
     semi_join(valid_stats, by = c("table_name", "column_name"))
 
-  # PostgreSQL limit: 1664 target list entries. CTE selects 1 per column plus
-
-  # cardinality helpers. Use 1500 as safe batch limit to leave room for extras.
-  max_cte_columns <- 1500
+  # Batch size: limits SQL string length to avoid xargs "argument line too long"
+  # inside partParalXZ4. Same limit as Phase 1 stats batching.
+  max_hist_columns <- 50
 
   scripts <- list()
 
@@ -1650,55 +1649,30 @@ build_histogram_scripts <- function(columns_df, global_stats, runid,
 
     n_cols <- nrow(tbl_cols)
 
-    # Split into batches if too many columns for a single CTE
-    if (n_cols > max_cte_columns) {
-      n_batches <- ceiling(n_cols / max_cte_columns)
-      cat(sprintf("  %s: %d columns exceeds CTE limit, splitting into %d batches\n",
-                  tbl, n_cols, n_batches))
-
-      batch_indices <- split(seq_len(n_cols), ceiling(seq_len(n_cols) / max_cte_columns))
-
-      for (b in seq_along(batch_indices)) {
-        batch_col_names <- tbl_cols$column_name[batch_indices[[b]]]
-        batch_columns_df <- valid_columns_df %>%
-          filter(table_name == tbl, column_name %in% batch_col_names)
-        batch_stats <- valid_stats %>%
-          filter(table_name == tbl, column_name %in% batch_col_names)
-
-        sql_query <- build_table_histogram_query(
-          table_name = tbl,
-          columns_df = batch_columns_df,
-          global_stats = batch_stats,
-          runid = runid,
-          num_buckets = num_buckets,
-          join_clause = join_clause,
-          table_info = table_info
-        )
-
-        if (is.null(sql_query)) next
-
-        batch_key <- sprintf("%s__batch%d", tbl, b)
-        output_table <- sprintf("%s.hist_%s_b%d_%d", schema,
-                                 sanitize_identifier(tbl, 40), b, runid)
-
-        scripts[[batch_key]] <- list(
-          sql_query = sql_query,
-          source_table = tbl,
-          output_table = output_table,
-          n_columns = nrow(batch_columns_df),
-          join_clause = join_clause,
-          has_sourceid = tbl_use_parallel,
-          aggregation_query = build_histogram_aggregation_query(output_table)
-        )
-
-        cat(sprintf("  %s [batch %d/%d]: %d columns -> %s\n",
-                    tbl, b, n_batches, nrow(batch_columns_df), output_table))
-      }
+    # Split into batches to keep SQL within xargs limits
+    if (n_cols > max_hist_columns) {
+      n_batches <- ceiling(n_cols / max_hist_columns)
+      batch_indices <- split(seq_len(n_cols), ceiling(seq_len(n_cols) / max_hist_columns))
     } else {
+      n_batches <- 1
+      batch_indices <- list(seq_len(n_cols))
+    }
+
+    if (n_batches > 1) {
+      cat(sprintf("  %s: %d columns, splitting into %d batches\n", tbl, n_cols, n_batches))
+    }
+
+    for (b in seq_along(batch_indices)) {
+      batch_col_names <- tbl_cols$column_name[batch_indices[[b]]]
+      batch_columns_df <- valid_columns_df %>%
+        filter(table_name == tbl, column_name %in% batch_col_names)
+      batch_stats <- valid_stats %>%
+        filter(table_name == tbl, column_name %in% batch_col_names)
+
       sql_query <- build_table_histogram_query(
         table_name = tbl,
-        columns_df = valid_columns_df,
-        global_stats = valid_stats,
+        columns_df = batch_columns_df,
+        global_stats = batch_stats,
         runid = runid,
         num_buckets = num_buckets,
         join_clause = join_clause,
@@ -1707,19 +1681,27 @@ build_histogram_scripts <- function(columns_df, global_stats, runid,
 
       if (is.null(sql_query)) next
 
-      output_table <- sprintf("%s.hist_%s_%d", schema, sanitize_identifier(tbl, 50), runid)
+      if (n_batches > 1) {
+        batch_key <- sprintf("%s__batch%d", tbl, b)
+        output_table <- sprintf("%s.hist_%s_b%d_%d", schema,
+                                 sanitize_identifier(tbl, 40), b, runid)
+        cat(sprintf("  %s [batch %d/%d]: %d columns -> %s\n",
+                    tbl, b, n_batches, nrow(batch_columns_df), output_table))
+      } else {
+        batch_key <- tbl
+        output_table <- sprintf("%s.hist_%s_%d", schema, sanitize_identifier(tbl, 50), runid)
+        cat(sprintf("  %s: %d valid columns -> %s\n", tbl, n_cols, output_table))
+      }
 
-      scripts[[tbl]] <- list(
+      scripts[[batch_key]] <- list(
         sql_query = sql_query,
         source_table = tbl,
         output_table = output_table,
-        n_columns = n_cols,
+        n_columns = nrow(batch_columns_df),
         join_clause = join_clause,
         has_sourceid = tbl_use_parallel,
         aggregation_query = build_histogram_aggregation_query(output_table)
       )
-
-      cat(sprintf("  %s: %d valid columns -> %s\n", tbl, n_cols, output_table))
     }
   }
 

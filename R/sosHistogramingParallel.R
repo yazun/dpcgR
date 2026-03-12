@@ -713,7 +713,7 @@ compute_global_stats <- function(conn, columns_df, runid,
   # Batch size for UNION ALL queries: limits SQL string length to avoid
 
   # xargs "argument line too long" inside partParalXZ4
-  max_stats_columns <- 30
+  max_stats_columns <- 50
 
   all_stats <- list()
 

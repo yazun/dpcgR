@@ -710,6 +710,11 @@ compute_global_stats <- function(conn, columns_df, runid,
   cat(sprintf("Computing global stats for %d tables, %d columns (parallel execution)...\n",
               length(tables), nrow(columns_df)))
 
+  # Batch size for UNION ALL queries: limits SQL string length to avoid
+
+  # xargs "argument line too long" inside partParalXZ4
+  max_stats_columns <- 100
+
   all_stats <- list()
 
   for (tbl in tables) {
@@ -718,9 +723,6 @@ compute_global_stats <- function(conn, columns_df, runid,
     } else {
       join_clause <- default_join_clause
     }
-
-    query <- build_global_stats_query(tbl, columns_df, runid, join_clause,
-                                       table_info = table_info)
 
     # Check if this table should use parallel execution
     tbl_use_parallel <- TRUE
@@ -733,17 +735,40 @@ compute_global_stats <- function(conn, columns_df, runid,
       }
     }
 
-    if (!is.null(query)) {
-      n_cols <- sum(columns_df$table_name == tbl)
-      cat(sprintf("  %s (%d columns)...\n", tbl, n_cols))
+    tbl_cols <- columns_df[columns_df$table_name == tbl, ]
+    n_cols <- nrow(tbl_cols)
+    cat(sprintf("  %s (%d columns)...\n", tbl, n_cols))
+
+    # Split into batches to keep SQL query length within xargs limits
+    if (n_cols > max_stats_columns) {
+      n_batches <- ceiling(n_cols / max_stats_columns)
+      cat(sprintf("    Splitting into %d batches of ~%d columns\n", n_batches, max_stats_columns))
+      batch_indices <- split(seq_len(n_cols), ceiling(seq_len(n_cols) / max_stats_columns))
+    } else {
+      batch_indices <- list(seq_len(n_cols))
+    }
+
+    for (b in seq_along(batch_indices)) {
+      batch_col_names <- tbl_cols$column_name[batch_indices[[b]]]
+      batch_columns_df <- columns_df %>%
+        filter(table_name == tbl, column_name %in% batch_col_names)
+
+      query <- build_global_stats_query(tbl, batch_columns_df, runid, join_clause,
+                                         table_info = table_info)
+      if (is.null(query)) next
+
+      batch_n <- nrow(batch_columns_df)
+      batch_label <- if (length(batch_indices) > 1) sprintf(" [batch %d/%d, %d cols]", b, length(batch_indices), batch_n) else ""
 
       if (execute && !is.null(db_user) && tbl_use_parallel) {
-        # Execute via parallel script (requires sourceid for partitioning)
-        output_table <- sprintf("%s.stats_%s_%d", schema, sanitize_identifier(tbl, 50), runid)
+        # Execute via parallel script
+        batch_suffix <- if (length(batch_indices) > 1) sprintf("_b%d", b) else ""
+        output_table <- sprintf("%s.stats_%s%s_%d", schema,
+                                 sanitize_identifier(tbl, 45), batch_suffix, runid)
 
         if (debug) {
           cat(sprintf("    Output table: %s\n", output_table))
-          cat(sprintf("    Query (first 500 chars): %s...\n", substr(query, 1, 500)))
+          cat(sprintf("    Query length: %d chars%s\n", nchar(query), batch_label))
         }
 
         exit_code <- execute_parallel_script(
@@ -754,11 +779,11 @@ compute_global_stats <- function(conn, columns_df, runid,
           slack_user = slack_user,
           parallelism = parallelism,
           num_chunks = num_chunks,
-          description = sprintf("GlobalStats %s", tbl)
+          description = sprintf("GlobalStats %s%s", tbl, batch_label)
         )
 
         if (exit_code != 0) {
-          warning(sprintf("Parallel stats query for %s failed with exit code %d", tbl, exit_code))
+          warning(sprintf("Parallel stats query for %s%s failed with exit code %d", tbl, batch_label, exit_code))
           next
         }
 
@@ -794,7 +819,8 @@ compute_global_stats <- function(conn, columns_df, runid,
 
       # Sanitize stats (integer64 conversion, NaN/Inf handling)
       stats_long <- sanitize_stats_df(stats_long)
-      all_stats[[tbl]] <- stats_long
+      batch_key <- if (length(batch_indices) > 1) sprintf("%s_b%d", tbl, b) else tbl
+      all_stats[[batch_key]] <- stats_long
     }
   }
 

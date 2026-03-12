@@ -158,34 +158,38 @@ detect_system_columns <- function(conn, table_names, schemas = NULL) {
 
 #' Estimate Table Row Counts
 #'
-#' Uses PostgreSQL's \code{pg_class.reltuples} to get estimated row counts
-#' for a set of tables. This is fast (no table scan) and sufficiently accurate
-#' for deciding whether to use parallel execution.
-#'
-#' Note: For distributed tables (e.g., Citus), \code{reltuples} reports
-#' per-node counts. The \code{num_nodes} parameter multiplies the estimate
-#' to approximate the total across all data nodes.
+#' Estimates row counts for partitioned tables by summing
+#' \code{pg_class.reltuples} across all partitions (child tables found
+#' via \code{pg_inherits}). For non-partitioned tables, uses the parent's
+#' own \code{reltuples} directly.
 #'
 #' @param conn DBI database connection
 #' @param table_names Character vector of table names
-#' @param num_nodes Number of data nodes for distributed tables (default 6)
 #' @return Named numeric vector of estimated row counts, keyed by table_name
 #' @keywords internal
-estimate_table_rows <- function(conn, table_names, num_nodes = 6) {
+estimate_table_rows <- function(conn, table_names) {
   if (length(table_names) == 0) return(setNames(numeric(0), character(0)))
 
   tables_sql <- paste(sprintf("'%s'", table_names), collapse = ", ")
   query <- sprintf("
-    SELECT c.relname AS table_name,
-           c.reltuples::BIGINT AS est_rows
-    FROM pg_class c
-    JOIN pg_namespace n ON n.oid = c.relnamespace
-    WHERE c.relname IN (%s)
+    SELECT parent.relname AS table_name,
+           COALESCE(sum(child.reltuples), parent.reltuples)::BIGINT AS est_rows
+    FROM pg_class parent
+    JOIN pg_namespace n ON n.oid = parent.relnamespace
+    LEFT JOIN pg_inherits inh ON inh.inhparent = parent.oid
+    LEFT JOIN pg_class child ON child.oid = inh.inhrelid
+    WHERE parent.relname IN (%s)
       AND n.nspname IN (current_schema(), current_schema()||'_mdb')
-    ORDER BY c.reltuples DESC
+    GROUP BY parent.relname, parent.reltuples
   ", tables_sql)
 
-  result <- dbGetQuery(conn, query)
+  result <- tryCatch(
+    dbGetQuery(conn, query),
+    error = function(e) {
+      warning(sprintf("Could not estimate table rows: %s", e$message))
+      data.frame(table_name = character(0), est_rows = numeric(0))
+    }
+  )
 
   # De-duplicate: if same table_name in multiple schemas, take the max
   if (nrow(result) > 0) {
@@ -194,8 +198,7 @@ estimate_table_rows <- function(conn, table_names, num_nodes = 6) {
       summarise(est_rows = max(est_rows), .groups = "drop")
   }
 
-  # Multiply by number of nodes for distributed table estimates
-  row_counts <- setNames(as.numeric(result$est_rows) * num_nodes, result$table_name)
+  row_counts <- setNames(as.numeric(result$est_rows), result$table_name)
 
   # Ensure all requested tables are in the result (default 0 if not found)
   missing <- setdiff(table_names, names(row_counts))

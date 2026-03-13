@@ -873,11 +873,16 @@ build_column_bucket_select <- function(column_name, udt_name, global_min, global
     global_max <- 1
   }
 
-  # For integer columns: cap buckets at distinct value range, use half-integer boundaries
+  # For integer columns: use one bucket per distinct value when the range is
+  # small enough (up to 500), otherwise fall back to num_buckets.
+  # Half-integer boundaries ensure each integer falls cleanly into one bucket.
   if (is_int) {
     int_range <- as.numeric(global_max) - as.numeric(global_min) + 1
-    effective_buckets <- min(num_buckets, int_range)
-    # Use half-integer boundaries so each integer falls cleanly into a bucket
+    if (int_range <= 500) {
+      effective_buckets <- int_range
+    } else {
+      effective_buckets <- num_buckets
+    }
     bucket_lo <- as.numeric(global_min) - 0.5
     bucket_hi <- as.numeric(global_max) + 0.5
   } else {

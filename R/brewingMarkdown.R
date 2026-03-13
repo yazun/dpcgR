@@ -647,6 +647,77 @@ generate_histogram_plots <- function(hist_results,
 
   cat(sprintf("Generating %d histogram plots...\n", nrow(table_col_combinations)))
 
+  # Build summary table of all column statistics as first element
+  summary_rows <- lapply(seq_len(nrow(table_col_combinations)), function(i) {
+    tbl <- table_col_combinations$table_name[i]
+    col <- table_col_combinations$column_name[i]
+    sub <- hist_df %>% filter(table_name == tbl, column_name == col)
+    ht <- if ("hist_type" %in% names(sub)) sub$hist_type[1] else "numeric"
+
+    if (ht == "categorical") {
+      data.frame(
+        table = tbl, column = col, type = "categorical",
+        min = NA_real_, max = NA_real_,
+        valid = sub$non_nan_count[1], null_count = sub$nan_count[1],
+        nan = NA_real_, inf = NA_real_,
+        stringsAsFactors = FALSE
+      )
+    } else {
+      data.frame(
+        table = tbl, column = col, type = "numeric",
+        min = if ("global_min" %in% names(sub)) sub$global_min[1] else NA_real_,
+        max = if ("global_max" %in% names(sub)) sub$global_max[1] else NA_real_,
+        valid = sub$non_nan_count[1], null_count = sub$nan_count[1],
+        nan = if ("nan_count" %in% names(sub)) sub$nan_count[1] else NA_real_,
+        inf = if ("inf_count" %in% names(sub)) sub$inf_count[1] else NA_real_,
+        stringsAsFactors = FALSE
+      )
+    }
+  })
+  summary_df <- bind_rows(summary_rows)
+
+  # Format numbers for display
+  fmt <- function(x) {
+    ifelse(is.na(x), "",
+           ifelse(abs(x) >= 1e6 | (abs(x) < 0.001 & x != 0),
+                  formatC(x, format = "e", digits = 4),
+                  formatC(x, format = "f", digits = 4, big.mark = ",")))
+  }
+  fmt_int <- function(x) ifelse(is.na(x), "", format(x, big.mark = ",", scientific = FALSE))
+
+  summary_fig <- plot_ly(
+    type = 'table',
+    header = list(
+      values = list('<b>Table</b>', '<b>Column</b>', '<b>Type</b>',
+                    '<b>Min</b>', '<b>Max</b>',
+                    '<b>Valid</b>', '<b>NULL</b>', '<b>NaN</b>', '<b>Inf</b>'),
+      align = 'left',
+      fill = list(color = 'rgb(55, 128, 191)'),
+      font = list(color = 'white', size = 12)
+    ),
+    cells = list(
+      values = list(
+        summary_df$table, summary_df$column, summary_df$type,
+        fmt(summary_df$min), fmt(summary_df$max),
+        fmt_int(summary_df$valid), fmt_int(summary_df$null_count),
+        fmt_int(summary_df$nan), fmt_int(summary_df$inf)
+      ),
+      align = 'left',
+      fill = list(color = list(
+        ifelse(seq_len(nrow(summary_df)) %% 2 == 0, 'rgb(240,240,240)', 'white')
+      )),
+      font = list(size = 11),
+      height = 25
+    )
+  ) %>%
+    layout(
+      title = list(
+        text = sprintf('<b>Column Statistics Summary (%d columns)</b>', nrow(summary_df)),
+        font = list(size = 16)
+      ),
+      margin = list(t = 40)
+    )
+
   # Function to create categorical histogram for a single column
   create_single_categorical <- function(data, tbl_name, col_name) {
     df_subset <- data %>%
@@ -749,7 +820,10 @@ generate_histogram_plots <- function(hist_results,
   # Remove any NULL entries
   histogram_list <- histogram_list[!sapply(histogram_list, is.null)]
 
-  cat(sprintf("Generated %d histogram plots\n", length(histogram_list)))
+  # Prepend summary table
+  histogram_list <- c(list("00_summary" = summary_fig), histogram_list)
+
+  cat(sprintf("Generated %d histogram plots (including summary table)\n", length(histogram_list)))
 
   return(histogram_list)
 }

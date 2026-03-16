@@ -402,23 +402,30 @@ brew_plotly_chunks <- function(plot_list,
     plot_name <- plot_names[i]
 
     # Parse plot name to create readable section title
-    # Uses same logic as brew_plot_chunks for consistency
-    parts <- strsplit(plot_name, "_")[[1]]
-
-    # Create section title based on plot naming convention
-    if ("merged" %in% parts) {
-      # Handle merged plots: "sosname_merged_with_cuts" -> "SOS Name - Merged (With Cuts)"
-      sosname <- parts[1]
-      type_parts <- parts[3:length(parts)]
-      type_str <- paste(toTitleCase(type_parts), collapse = " ")
-      section_title <- sprintf("%s - Merged (%s)", sosname, type_str)
+    if (plot_name == "00_summary") {
+      # Summary table: use a clean title
+      section_title <- "Column Statistics Summary"
+    } else if (grepl("\\.", plot_name)) {
+      # Histogram plot: "table_name.column_name" format
+      dot_parts <- strsplit(plot_name, "\\.", fixed = FALSE)[[1]]
+      section_title <- paste(dot_parts, collapse = " - ")
     } else {
-      # Handle classifier plots: "sosname_classifier_with_cuts"
-      sosname <- parts[1]
-      classifier <- parts[2]
-      type_parts <- parts[3:length(parts)]
-      type_str <- paste(toTitleCase(type_parts), collapse = " ")
-      section_title <- sprintf("%s - %s (%s)", sosname, classifier, type_str)
+      # Legacy SOS plot naming convention
+      parts <- strsplit(plot_name, "_")[[1]]
+      if ("merged" %in% parts) {
+        sosname <- parts[1]
+        type_parts <- parts[3:length(parts)]
+        type_str <- paste(toTitleCase(type_parts), collapse = " ")
+        section_title <- sprintf("%s - Merged (%s)", sosname, type_str)
+      } else if (length(parts) >= 3) {
+        sosname <- parts[1]
+        classifier <- parts[2]
+        type_parts <- parts[3:length(parts)]
+        type_str <- paste(toTitleCase(type_parts), collapse = " ")
+        section_title <- sprintf("%s - %s (%s)", sosname, classifier, type_str)
+      } else {
+        section_title <- gsub("_", " ", plot_name)
+      }
     }
 
     # Create safe chunk name with "plotly_" prefix
@@ -685,38 +692,36 @@ generate_histogram_plots <- function(hist_results,
   }
   fmt_int <- function(x) ifelse(is.na(x), "", format(x, big.mark = ",", scientific = FALSE))
 
-  summary_fig <- plot_ly(
-    type = 'table',
-    header = list(
-      values = list('<b>Table</b>', '<b>Column</b>', '<b>Type</b>',
-                    '<b>Min</b>', '<b>Max</b>',
-                    '<b>Valid</b>', '<b>NULL</b>', '<b>NaN</b>', '<b>Inf</b>'),
-      align = 'left',
-      fill = list(color = 'rgb(55, 128, 191)'),
-      font = list(color = 'white', size = 12)
+  # Build display data frame with formatted values
+  display_df <- data.frame(
+    Table = summary_df$table,
+    Column = summary_df$column,
+    Type = summary_df$type,
+    Min = fmt(summary_df$min),
+    Max = fmt(summary_df$max),
+    Valid = fmt_int(summary_df$valid),
+    `NULL` = fmt_int(summary_df$null_count),
+    NaN = fmt_int(summary_df$nan),
+    Inf = fmt_int(summary_df$inf),
+    stringsAsFactors = FALSE, check.names = FALSE
+  )
+
+  # Use DT::datatable for interactive, resizable, sortable table
+  summary_fig <- DT::datatable(
+    display_df,
+    caption = sprintf('Column Statistics Summary (%d columns)', nrow(summary_df)),
+    options = list(
+      pageLength = 50,
+      scrollX = TRUE,
+      autoWidth = TRUE,
+      columnDefs = list(
+        list(width = '200px', targets = 1)  # Column name gets more space
+      ),
+      dom = 'ftip'  # filter, table, info, pagination (no length selector)
     ),
-    cells = list(
-      values = list(
-        summary_df$table, summary_df$column, summary_df$type,
-        fmt(summary_df$min), fmt(summary_df$max),
-        fmt_int(summary_df$valid), fmt_int(summary_df$null_count),
-        fmt_int(summary_df$nan), fmt_int(summary_df$inf)
-      ),
-      align = 'left',
-      fill = list(color = list(
-        ifelse(seq_len(nrow(summary_df)) %% 2 == 0, 'rgb(240,240,240)', 'white')
-      )),
-      font = list(size = 11),
-      height = 25
-    )
-  ) %>%
-    layout(
-      title = list(
-        text = sprintf('<b>Column Statistics Summary (%d columns)</b>', nrow(summary_df)),
-        font = list(size = 16)
-      ),
-      margin = list(t = 40)
-    )
+    rownames = FALSE,
+    class = 'cell-border stripe hover compact'
+  )
 
   # Function to create categorical histogram for a single column
   create_single_categorical <- function(data, tbl_name, col_name) {

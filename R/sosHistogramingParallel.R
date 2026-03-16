@@ -60,6 +60,7 @@ expand_array_columns <- function(columns_df, n = 10) {
     columns_df$col_ref <- character(0)
     columns_df$min_array_len <- integer(0)
     columns_df$array_col <- character(0)
+    columns_df$array_len_ref <- character(0)
     return(columns_df)
   }
 
@@ -75,6 +76,8 @@ expand_array_columns <- function(columns_df, n = 10) {
       elem_udts <- rep(base_udt, n)
       elem_min_len <- seq_len(n)
       # Length row: colname_len
+      # array_len_ref stores the raw expression (without cardinality() wrapper)
+      # so the CTE builder can apply table prefix correctly
       data.frame(
         table_name = rep(row$table_name, n + 1),
         column_name = c(elem_names, paste0(cn, "_len")),
@@ -82,6 +85,7 @@ expand_array_columns <- function(columns_df, n = 10) {
         col_ref = c(elem_refs, sprintf("cardinality(%s)", cn)),
         min_array_len = c(as.integer(elem_min_len), 0L),
         array_col = rep(cn, n + 1),
+        array_len_ref = c(rep(cn, n), NA_character_),
         stringsAsFactors = FALSE
       )
     } else {
@@ -93,11 +97,203 @@ expand_array_columns <- function(columns_df, n = 10) {
         col_ref = row$column_name,
         min_array_len = 0L,
         array_col = NA_character_,
+        array_len_ref = NA_character_,
         stringsAsFactors = FALSE
       )
     }
   })
   bind_rows(expanded)
+}
+
+#' Introspect Composite Type Fields
+#'
+#' Queries PostgreSQL system catalogs (pg_attribute, pg_type) to discover
+#' the fields of a composite type and their types/categories.
+#'
+#' @param conn DBI database connection
+#' @param type_name Character string: the composite type name (e.g., "tmdb_cu7_modelresult_149")
+#' @return Data frame with columns: field_name, field_type, field_category
+#'   (N=numeric, A=array, S=string, C=composite, B=boolean)
+#' @keywords internal
+introspect_composite_type <- function(conn, type_name) {
+  # Strip leading underscore for array-of-composite types
+  base_type <- sub("^_", "", type_name)
+
+  query <- sprintf("
+    SELECT a.attname AS field_name,
+           ft.typname AS field_type,
+           ft.typcategory AS field_category
+    FROM pg_type ct
+    JOIN pg_class cl ON cl.oid = ct.typrelid
+    JOIN pg_attribute a ON a.attrelid = cl.oid AND a.attnum > 0 AND NOT a.attisdropped
+    JOIN pg_type ft ON ft.oid = a.atttypid
+    WHERE ct.typname = '%s'
+    ORDER BY a.attnum
+  ", base_type)
+
+  dbGetQuery(conn, query)
+}
+
+#' Expand Composite Type Columns into Per-Field Rows
+#'
+#' Takes composite-type columns and expands them into individual field rows
+#' with appropriate \code{col_ref} SQL expressions for field access.
+#' Handles scalar composites, arrays of composites, and arrays within composites.
+#'
+#' @param conn DBI database connection (for type introspection)
+#' @param columns_df Data frame with table_name, column_name, udt_name
+#' @param n Number of array elements to expand (default 10)
+#' @param max_depth Maximum recursion depth for nested composites (default 2)
+#' @return Data frame with columns: table_name, column_name, udt_name, col_ref,
+#'   min_array_len, array_col, array_len_ref
+#' @keywords internal
+expand_composite_columns <- function(conn, columns_df, n = 10, max_depth = 2) {
+  if (nrow(columns_df) == 0) {
+    return(data.frame(
+      table_name = character(0), column_name = character(0),
+      udt_name = character(0), col_ref = character(0),
+      min_array_len = integer(0), array_col = character(0),
+      array_len_ref = character(0), stringsAsFactors = FALSE
+    ))
+  }
+
+  # Cache type introspection results
+  type_cache <- list()
+  get_fields <- function(type_name) {
+    base_type <- sub("^_", "", type_name)
+    if (is.null(type_cache[[base_type]])) {
+      type_cache[[base_type]] <<- introspect_composite_type(conn, base_type)
+    }
+    type_cache[[base_type]]
+  }
+
+  # Recursive helper: expand fields of a composite access expression
+  # col_expr: SQL expression to access the composite (e.g., "col" or "(col)[1]")
+  # name_prefix: display name prefix (e.g., "col__" or "col_1__")
+  # type_name: composite type name
+  # depth: current recursion depth
+  # base_array_col: top-level array column (for min_array_len tracking), or NA
+  # base_min_len: min_array_len from parent (for array-of-composite elements)
+  # base_len_ref: array_len_ref from parent
+  expand_fields <- function(table_name, col_expr, name_prefix, type_name,
+                            depth, base_array_col, base_min_len, base_len_ref) {
+    fields <- get_fields(type_name)
+    if (nrow(fields) == 0) return(list())
+
+    rows <- list()
+    for (j in seq_len(nrow(fields))) {
+      f <- fields[j, ]
+      field_ref <- sprintf("(%s).%s", col_expr, f$field_name)
+      field_name <- paste0(name_prefix, f$field_name)
+
+      if (f$field_category == "N") {
+        # Numeric field: direct histogram
+        rows[[length(rows) + 1]] <- data.frame(
+          table_name = table_name,
+          column_name = field_name,
+          udt_name = f$field_type,
+          col_ref = field_ref,
+          min_array_len = base_min_len,
+          array_col = base_array_col,
+          array_len_ref = base_len_ref,
+          stringsAsFactors = FALSE
+        )
+      } else if (f$field_category == "A") {
+        # Array field inside composite: expand elements
+        base_elem_type <- sub("^_", "", f$field_type)
+        arr_name_prefix <- paste0(name_prefix, f$field_name)
+        # Raw expression for the array (no cardinality wrapper — CTE builder adds it)
+        arr_raw_expr <- sprintf("(%s).%s", col_expr, f$field_name)
+
+        for (k in seq_len(n)) {
+          elem_ref <- sprintf("(%s).%s[%d]", col_expr, f$field_name, k)
+          elem_name <- sprintf("%s_%d", arr_name_prefix, k)
+          rows[[length(rows) + 1]] <- data.frame(
+            table_name = table_name,
+            column_name = elem_name,
+            udt_name = base_elem_type,
+            col_ref = elem_ref,
+            min_array_len = as.integer(k),
+            array_col = arr_name_prefix,
+            array_len_ref = arr_raw_expr,
+            stringsAsFactors = FALSE
+          )
+        }
+        # Array length row
+        rows[[length(rows) + 1]] <- data.frame(
+          table_name = table_name,
+          column_name = paste0(arr_name_prefix, "_len"),
+          udt_name = "int4",
+          col_ref = sprintf("cardinality(%s)", arr_raw_expr),
+          min_array_len = base_min_len,
+          array_col = base_array_col,
+          array_len_ref = base_len_ref,
+          stringsAsFactors = FALSE
+        )
+      } else if (f$field_category == "C" && depth < max_depth) {
+        # Nested composite: recurse
+        nested <- expand_fields(table_name, field_ref,
+                                paste0(field_name, "__"), f$field_type,
+                                depth + 1, base_array_col, base_min_len, base_len_ref)
+        rows <- c(rows, nested)
+      }
+      # Skip other categories (S=string, B=boolean, etc.) — handled by text pipeline
+    }
+    rows
+  }
+
+  all_rows <- list()
+  for (i in seq_len(nrow(columns_df))) {
+    row <- columns_df[i, ]
+    is_array <- grepl("^_", row$udt_name)
+    base_type <- sub("^_", "", row$udt_name)
+    col <- row$column_name
+
+    if (is_array) {
+      # Array of composites: expand each element, then each field
+      for (k in seq_len(n)) {
+        elem_expr <- sprintf("(%s)[%d]", col, k)
+        elem_prefix <- sprintf("%s_%d__", col, k)
+        field_rows <- expand_fields(
+          row$table_name, elem_expr, elem_prefix, base_type,
+          depth = 1, base_array_col = col,
+          base_min_len = as.integer(k),
+          base_len_ref = col  # raw expression, CTE builder wraps with cardinality()
+        )
+        all_rows <- c(all_rows, field_rows)
+      }
+      # Array length row for the top-level array
+      all_rows[[length(all_rows) + 1]] <- data.frame(
+        table_name = row$table_name,
+        column_name = paste0(col, "_len"),
+        udt_name = "int4",
+        col_ref = sprintf("cardinality(%s)", col),
+        min_array_len = 0L,
+        array_col = NA_character_,
+        array_len_ref = NA_character_,
+        stringsAsFactors = FALSE
+      )
+    } else {
+      # Scalar composite: expand each field directly
+      field_rows <- expand_fields(
+        row$table_name, col, paste0(col, "__"), base_type,
+        depth = 1, base_array_col = NA_character_,
+        base_min_len = 0L, base_len_ref = NA_character_
+      )
+      all_rows <- c(all_rows, field_rows)
+    }
+  }
+
+  if (length(all_rows) == 0) {
+    return(data.frame(
+      table_name = character(0), column_name = character(0),
+      udt_name = character(0), col_ref = character(0),
+      min_array_len = integer(0), array_col = character(0),
+      array_len_ref = character(0), stringsAsFactors = FALSE
+    ))
+  }
+
+  bind_rows(all_rows)
 }
 
 #' Detect System Columns Per Table
@@ -257,7 +453,48 @@ get_histogram_columns <- function(conn, module, array_elements = 10) {
 
   raw_df <- dbGetQuery(conn, query)
   columns_df <- expand_array_columns(raw_df, n = array_elements)
-  table_info <- detect_system_columns(conn, unique(raw_df$table_name))
+
+  # Discover composite-type columns and expand their numeric fields
+  composite_query <- sprintf("
+   WITH t AS (
+     SELECT tbl.table_name
+     FROM dpcg_orm_module_table_mapping tbl
+     WHERE '%s' = ANY(tbl.modules)
+   )
+   SELECT c.table_name, c.column_name, c.udt_name
+   FROM information_schema.columns c
+   JOIN t USING(table_name)
+   WHERE c.column_name !~ 'runid|catalogid|sourceid|fstate|sostype|error|other'
+     AND c.udt_name IN (
+       SELECT typname FROM pg_type WHERE typtype = 'c'
+       UNION ALL
+       SELECT '_' || typname FROM pg_type WHERE typtype = 'c'
+     )
+     AND c.table_schema = current_schema()
+   ORDER BY c.table_name, c.column_name
+  ", module)
+
+  composite_raw <- dbGetQuery(conn, composite_query)
+  if (nrow(composite_raw) > 0) {
+    composite_expanded <- expand_composite_columns(conn, composite_raw, n = array_elements)
+    # Keep only numeric-type expanded fields
+    composite_numeric <- composite_expanded[
+      grepl("^float|^int|^numeric", composite_expanded$udt_name), , drop = FALSE
+    ]
+    if (nrow(composite_numeric) > 0) {
+      # Ensure columns_df also has array_len_ref for bind_rows compatibility
+      if (!"array_len_ref" %in% names(columns_df)) {
+        columns_df$array_len_ref <- NA_character_
+      }
+      columns_df <- bind_rows(columns_df, composite_numeric)
+      message(sprintf("  Discovered %d numeric fields from %d composite columns",
+                      nrow(composite_numeric), nrow(composite_raw)))
+    }
+  }
+
+  all_tables <- unique(c(raw_df$table_name,
+                          if (nrow(composite_raw) > 0) composite_raw$table_name))
+  table_info <- detect_system_columns(conn, all_tables)
 
   list(columns = columns_df, table_info = table_info)
 }
@@ -310,7 +547,44 @@ get_histogram_mdb_columns <- function(conn, module, array_elements = 10) {
 
   raw_df <- dbGetQuery(conn, query)
   columns_df <- expand_array_columns(raw_df, n = array_elements)
-  table_info <- detect_system_columns(conn, unique(raw_df$table_name))
+
+  # Discover composite-type columns and expand their numeric fields
+  composite_query <- sprintf("
+   WITH t AS (
+     SELECT '%s' table_name
+   )
+   SELECT c.table_name, c.column_name, c.udt_name
+   FROM information_schema.columns c
+   JOIN t USING(table_name)
+   WHERE c.column_name !~ 'runid|catalogid|sourceid|fstate|sostype|error|other|file_id|transfer_id'
+     AND c.udt_name IN (
+       SELECT typname FROM pg_type WHERE typtype = 'c'
+       UNION ALL
+       SELECT '_' || typname FROM pg_type WHERE typtype = 'c'
+     )
+     AND c.table_schema in (current_schema(),current_schema()||'_mdb')
+   ORDER BY c.table_name, c.column_name
+  ", module)
+
+  composite_raw <- dbGetQuery(conn, composite_query)
+  if (nrow(composite_raw) > 0) {
+    composite_expanded <- expand_composite_columns(conn, composite_raw, n = array_elements)
+    composite_numeric <- composite_expanded[
+      grepl("^float|^int|^numeric", composite_expanded$udt_name), , drop = FALSE
+    ]
+    if (nrow(composite_numeric) > 0) {
+      if (!"array_len_ref" %in% names(columns_df)) {
+        columns_df$array_len_ref <- NA_character_
+      }
+      columns_df <- bind_rows(columns_df, composite_numeric)
+      message(sprintf("  Discovered %d numeric fields from %d composite columns",
+                      nrow(composite_numeric), nrow(composite_raw)))
+    }
+  }
+
+  all_tables <- unique(c(raw_df$table_name,
+                          if (nrow(composite_raw) > 0) composite_raw$table_name))
+  table_info <- detect_system_columns(conn, all_tables)
 
   list(columns = columns_df, table_info = table_info)
 }
@@ -478,14 +752,22 @@ build_global_stats_query <- function(table_name, columns_df, runid,
   })
 
   # Ensure cardinality columns are in CTE for array element filtering
-  array_cols_needed <- unique(na.omit(
-    table_cols$array_col[table_cols$min_array_len > 0]
-  ))
-  for (ac in array_cols_needed) {
-    len_name <- paste0(ac, "_len")
-    if (!(len_name %in% table_cols$column_name)) {
-      cte_parts <- c(cte_parts,
-                      sprintf("cardinality(%s%s) AS %s", col_prefix, ac, len_name))
+  # array_len_ref holds the raw expression whose cardinality we need
+  # (e.g., "fouriercoefficients" or "(modelresult).periods")
+  array_len_rows <- table_cols[table_cols$min_array_len > 0 & !is.na(table_cols$array_col), ]
+  if (nrow(array_len_rows) > 0) {
+    len_needed <- unique(array_len_rows[, c("array_col", "array_len_ref"), drop = FALSE])
+    for (j in seq_len(nrow(len_needed))) {
+      ac <- len_needed$array_col[j]
+      len_name <- paste0(ac, "_len")
+      if (!(len_name %in% table_cols$column_name)) {
+        len_ref <- len_needed$array_len_ref[j]
+        if (is.na(len_ref) || !nzchar(len_ref)) {
+          len_ref <- ac
+        }
+        cte_parts <- c(cte_parts,
+                        sprintf("cardinality(%s%s) AS %s", col_prefix, len_ref, len_name))
+      }
     }
   }
   col_list <- paste(cte_parts, collapse = ", ")
@@ -1027,14 +1309,21 @@ build_table_histogram_query <- function(table_name, columns_df, global_stats, ru
 
   # Ensure cardinality columns are in CTE for array element filtering
   # (even if _len column itself was filtered out by stats validation)
-  array_cols_needed <- unique(na.omit(
-    table_cols$array_col[table_cols$min_array_len > 0]
-  ))
-  for (ac in array_cols_needed) {
-    len_name <- paste0(ac, "_len")
-    if (!(len_name %in% table_cols$column_name)) {
-      cte_parts <- c(cte_parts,
-                      sprintf("cardinality(%s%s) AS %s", col_prefix, ac, len_name))
+  # array_len_ref holds the raw expression whose cardinality we need
+  array_len_rows <- table_cols[table_cols$min_array_len > 0 & !is.na(table_cols$array_col), ]
+  if (nrow(array_len_rows) > 0) {
+    len_needed <- unique(array_len_rows[, c("array_col", "array_len_ref"), drop = FALSE])
+    for (j in seq_len(nrow(len_needed))) {
+      ac <- len_needed$array_col[j]
+      len_name <- paste0(ac, "_len")
+      if (!(len_name %in% table_cols$column_name)) {
+        len_ref <- len_needed$array_len_ref[j]
+        if (is.na(len_ref) || !nzchar(len_ref)) {
+          len_ref <- ac
+        }
+        cte_parts <- c(cte_parts,
+                        sprintf("cardinality(%s%s) AS %s", col_prefix, len_ref, len_name))
+      }
     }
   }
   col_list <- paste(cte_parts, collapse = ", ")

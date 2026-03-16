@@ -701,8 +701,8 @@ generate_histogram_plots <- function(hist_results,
     Max = fmt(summary_df$max),
     Valid = fmt_int(summary_df$valid),
     `NULL` = fmt_int(summary_df$null_count),
-    NaN = fmt_int(summary_df$nan),
-    Inf = fmt_int(summary_df$inf),
+    `NaN` = fmt_int(summary_df$nan),
+    `Inf` = fmt_int(summary_df$inf),
     stringsAsFactors = FALSE, check.names = FALSE
   )
 

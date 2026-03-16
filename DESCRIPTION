@@ -31,6 +31,7 @@ Imports:
     ggpointdensity,
     jsonlite,
     plotly,
+    DT,
     rlang,
     tidyr,
     visNetwork

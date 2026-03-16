@@ -692,9 +692,8 @@ generate_histogram_plots <- function(hist_results,
   }
   fmt_int <- function(x) ifelse(is.na(x), "", format(x, big.mark = ",", scientific = FALSE))
 
-  # Build display data frame with formatted values
+  # Build display data frame with formatted values (no Table column — always same table)
   display_df <- data.frame(
-    Table = summary_df$table,
     Column = summary_df$column,
     Type = summary_df$type,
     Min = fmt(summary_df$min),
@@ -706,18 +705,14 @@ generate_histogram_plots <- function(hist_results,
     stringsAsFactors = FALSE, check.names = FALSE
   )
 
-  # Use DT::datatable for interactive, resizable, sortable table
+  # Use DT::datatable for interactive, sortable, searchable table
   summary_fig <- DT::datatable(
     display_df,
     caption = sprintf('Column Statistics Summary (%d columns)', nrow(summary_df)),
     options = list(
       pageLength = 50,
       scrollX = TRUE,
-      autoWidth = TRUE,
-      columnDefs = list(
-        list(width = '200px', targets = 1)  # Column name gets more space
-      ),
-      dom = 'ftip'  # filter, table, info, pagination (no length selector)
+      dom = 'ftip'
     ),
     rownames = FALSE,
     class = 'cell-border stripe hover compact'

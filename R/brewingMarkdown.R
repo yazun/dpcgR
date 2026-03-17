@@ -555,11 +555,18 @@ generate_histogram_plots <- function(hist_results,
   }
 
   # Function to create histogram for a single attribute
-  create_single_histogram <- function(data, tbl_name, col_name) {
+  create_single_histogram <- function(data, tbl_name, col_name, gk_value = NULL) {
 
-    df_subset <- data %>%
-      filter(table_name == !!tbl_name,
-             column_name == !!col_name)
+    if (!is.null(gk_value)) {
+      df_subset <- data %>%
+        filter(table_name == !!tbl_name,
+               column_name == !!col_name,
+               group_key == !!gk_value)
+    } else {
+      df_subset <- data %>%
+        filter(table_name == !!tbl_name,
+               column_name == !!col_name)
+    }
 
     if (nrow(df_subset) == 0) {
       warning(sprintf("No data found for %s.%s", tbl_name, col_name))
@@ -616,11 +623,12 @@ generate_histogram_plots <- function(hist_results,
       )
 
     # Layout with title and subtitle
+    gk_label <- if (!is.null(gk_value)) paste0(' [', gk_value, ']') else ''
     fig <- fig %>%
       layout(
         title = list(
           text = paste0(
-            '<b>', col_name, '</b><br>',
+            '<b>', col_name, gk_label, '</b><br>',
             '<sup>', tbl_name,
             ' | Non-NaN: ', format(non_nan_count, big.mark = ','),
             ' | NaN: ', format(nan_count, big.mark = ','), '</sup>'
@@ -647,10 +655,19 @@ generate_histogram_plots <- function(hist_results,
     return(fig)
   }
 
-  # Get unique table and column combinations
-  table_col_combinations <- hist_df %>%
-    select(table_name, column_name) %>%
-    distinct()
+  # Determine if group_key is present
+  has_gk <- "group_key" %in% names(hist_df)
+
+  # Get unique table, column (and group_key) combinations
+  if (has_gk) {
+    table_col_combinations <- hist_df %>%
+      select(table_name, column_name, group_key) %>%
+      distinct()
+  } else {
+    table_col_combinations <- hist_df %>%
+      select(table_name, column_name) %>%
+      distinct()
+  }
 
   cat(sprintf("Generating %d histogram plots...\n", nrow(table_col_combinations)))
 
@@ -658,12 +675,18 @@ generate_histogram_plots <- function(hist_results,
   summary_rows <- lapply(seq_len(nrow(table_col_combinations)), function(i) {
     tbl <- table_col_combinations$table_name[i]
     col <- table_col_combinations$column_name[i]
-    sub <- hist_df %>% filter(table_name == tbl, column_name == col)
+    if (has_gk) {
+      gk <- table_col_combinations$group_key[i]
+      sub <- hist_df %>% filter(table_name == tbl, column_name == col, group_key == gk)
+    } else {
+      gk <- NA_character_
+      sub <- hist_df %>% filter(table_name == tbl, column_name == col)
+    }
     ht <- if ("hist_type" %in% names(sub)) sub$hist_type[1] else "numeric"
 
     if (ht == "categorical") {
       data.frame(
-        table = tbl, column = col, type = "categorical",
+        table = tbl, column = col, group = gk, type = "categorical",
         min = NA_real_, max = NA_real_,
         valid = sub$non_nan_count[1], null_count = sub$nan_count[1],
         nan = NA_real_, inf = NA_real_,
@@ -671,7 +694,7 @@ generate_histogram_plots <- function(hist_results,
       )
     } else {
       data.frame(
-        table = tbl, column = col, type = "numeric",
+        table = tbl, column = col, group = gk, type = "numeric",
         min = if ("global_min" %in% names(sub)) sub$global_min[1] else NA_real_,
         max = if ("global_max" %in% names(sub)) sub$global_max[1] else NA_real_,
         valid = sub$non_nan_count[1], null_count = sub$nan_count[1],
@@ -692,23 +715,38 @@ generate_histogram_plots <- function(hist_results,
   }
   fmt_int <- function(x) ifelse(is.na(x), "", format(x, big.mark = ",", scientific = FALSE))
 
-  # Build display data frame with formatted values (no Table column — always same table)
-  display_df <- data.frame(
-    Column = summary_df$column,
-    Type = summary_df$type,
-    Min = fmt(summary_df$min),
-    Max = fmt(summary_df$max),
-    Valid = fmt_int(summary_df$valid),
-    `NULL` = fmt_int(summary_df$null_count),
-    `NaN` = fmt_int(summary_df$nan),
-    `Inf` = fmt_int(summary_df$inf),
-    stringsAsFactors = FALSE, check.names = FALSE
-  )
+  # Build display data frame with formatted values
+  if (has_gk) {
+    display_df <- data.frame(
+      Column = summary_df$column,
+      Group = summary_df$group,
+      Type = summary_df$type,
+      Min = fmt(summary_df$min),
+      Max = fmt(summary_df$max),
+      Valid = fmt_int(summary_df$valid),
+      `NULL` = fmt_int(summary_df$null_count),
+      `NaN` = fmt_int(summary_df$nan),
+      `Inf` = fmt_int(summary_df$inf),
+      stringsAsFactors = FALSE, check.names = FALSE
+    )
+  } else {
+    display_df <- data.frame(
+      Column = summary_df$column,
+      Type = summary_df$type,
+      Min = fmt(summary_df$min),
+      Max = fmt(summary_df$max),
+      Valid = fmt_int(summary_df$valid),
+      `NULL` = fmt_int(summary_df$null_count),
+      `NaN` = fmt_int(summary_df$nan),
+      `Inf` = fmt_int(summary_df$inf),
+      stringsAsFactors = FALSE, check.names = FALSE
+    )
+  }
 
   # Use DT::datatable for interactive, sortable, searchable table
   summary_fig <- DT::datatable(
     display_df,
-    caption = sprintf('Column Statistics Summary (%d columns)', nrow(summary_df)),
+    caption = sprintf('Column Statistics Summary (%d entries)', nrow(summary_df)),
     options = list(
       pageLength = 50,
       scrollX = TRUE,
@@ -719,10 +757,17 @@ generate_histogram_plots <- function(hist_results,
   )
 
   # Function to create categorical histogram for a single column
-  create_single_categorical <- function(data, tbl_name, col_name) {
-    df_subset <- data %>%
-      filter(table_name == !!tbl_name,
-             column_name == !!col_name)
+  create_single_categorical <- function(data, tbl_name, col_name, gk_value = NULL) {
+    if (!is.null(gk_value)) {
+      df_subset <- data %>%
+        filter(table_name == !!tbl_name,
+               column_name == !!col_name,
+               group_key == !!gk_value)
+    } else {
+      df_subset <- data %>%
+        filter(table_name == !!tbl_name,
+               column_name == !!col_name)
+    }
 
     if (nrow(df_subset) == 0) {
       warning(sprintf("No data found for %s.%s", tbl_name, col_name))
@@ -764,11 +809,12 @@ generate_histogram_plots <- function(hist_results,
         customdata = ~category_value
       )
 
+    gk_label <- if (!is.null(gk_value)) paste0(' [', gk_value, ']') else ''
     fig <- fig %>%
       layout(
         title = list(
           text = paste0(
-            '<b>', col_name, '</b><br>',
+            '<b>', col_name, gk_label, '</b><br>',
             '<sup>', tbl_name,
             ' | Non-NULL: ', format(non_nan_count, big.mark = ','),
             ' | NULL: ', format(nan_count, big.mark = ','), '</sup>'
@@ -795,27 +841,45 @@ generate_histogram_plots <- function(hist_results,
   for (i in 1:nrow(table_col_combinations)) {
     tbl <- table_col_combinations$table_name[i]
     col <- table_col_combinations$column_name[i]
+    gk_val <- if (has_gk) table_col_combinations$group_key[i] else NULL
 
     # Determine histogram type for this column
-    col_type <- hist_df %>%
-      filter(table_name == tbl, column_name == col) %>%
-      pull(hist_type) %>%
-      unique() %>%
-      `[`(1)
+    if (!is.null(gk_val)) {
+      col_type <- hist_df %>%
+        filter(table_name == tbl, column_name == col, group_key == gk_val) %>%
+        pull(hist_type) %>%
+        unique() %>%
+        `[`(1)
+    } else {
+      col_type <- hist_df %>%
+        filter(table_name == tbl, column_name == col) %>%
+        pull(hist_type) %>%
+        unique() %>%
+        `[`(1)
+    }
 
     if (!is.null(col_type) && !is.na(col_type) && col_type == "categorical") {
-      histogram_list[[i]] <- create_single_categorical(hist_df, tbl, col)
+      histogram_list[[i]] <- create_single_categorical(hist_df, tbl, col, gk_val)
     } else {
-      histogram_list[[i]] <- create_single_histogram(hist_df, tbl, col)
+      histogram_list[[i]] <- create_single_histogram(hist_df, tbl, col, gk_val)
     }
   }
 
   # Add meaningful names to the list
-  names(histogram_list) <- paste(
-    table_col_combinations$table_name,
-    table_col_combinations$column_name,
-    sep = "."
-  )
+  if (has_gk) {
+    names(histogram_list) <- paste(
+      table_col_combinations$table_name,
+      table_col_combinations$column_name,
+      table_col_combinations$group_key,
+      sep = "."
+    )
+  } else {
+    names(histogram_list) <- paste(
+      table_col_combinations$table_name,
+      table_col_combinations$column_name,
+      sep = "."
+    )
+  }
 
   # Remove any NULL entries
   histogram_list <- histogram_list[!sapply(histogram_list, is.null)]

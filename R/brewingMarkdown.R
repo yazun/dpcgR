@@ -693,11 +693,18 @@ generate_histogram_plots <- function(hist_results,
         stringsAsFactors = FALSE
       )
     } else {
+      # Derive null_count from total_count when available
+      nc <- if ("total_count" %in% names(sub)) {
+        sub$total_count[1] - sub$non_nan_count[1] - sub$nan_count[1] -
+          if ("inf_count" %in% names(sub)) sub$inf_count[1] else 0
+      } else {
+        NA_real_
+      }
       data.frame(
         table = tbl, column = col, group = gk, type = "numeric",
         min = if ("global_min" %in% names(sub)) sub$global_min[1] else NA_real_,
         max = if ("global_max" %in% names(sub)) sub$global_max[1] else NA_real_,
-        valid = sub$non_nan_count[1], null_count = sub$nan_count[1],
+        valid = sub$non_nan_count[1], null_count = nc,
         nan = if ("nan_count" %in% names(sub)) sub$nan_count[1] else NA_real_,
         inf = if ("inf_count" %in% names(sub)) sub$inf_count[1] else NA_real_,
         stringsAsFactors = FALSE

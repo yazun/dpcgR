@@ -826,7 +826,8 @@ build_global_stats_query <- function(table_name, columns_df, runid,
    COALESCE(max(%s) FILTER (WHERE %s%s IS NOT NULL AND %s != 'NaN'::float8 AND %s != 'Infinity'::float8 AND %s != '-Infinity'::float8), 'NaN'::float8)::NUMERIC AS global_max,
    COALESCE(count(*) FILTER (WHERE %s%s = 'NaN'::float8), 0)::BIGINT AS nan_count,
    COALESCE(count(*) FILTER (WHERE %s(%s = 'Infinity'::float8 OR %s = '-Infinity'::float8)), 0)::BIGINT AS inf_count,
-   COALESCE(count(*) FILTER (WHERE %s%s IS NOT NULL AND %s != 'NaN'::float8 AND %s != 'Infinity'::float8 AND %s != '-Infinity'::float8), 0)::BIGINT AS non_nan_count
+   COALESCE(count(*) FILTER (WHERE %s%s IS NOT NULL AND %s != 'NaN'::float8 AND %s != 'Infinity'::float8 AND %s != '-Infinity'::float8), 0)::BIGINT AS non_nan_count,
+   count(*)::BIGINT AS total_count
  FROM base%s",
               gk_select,
               col_name,
@@ -844,7 +845,8 @@ build_global_stats_query <- function(table_name, columns_df, runid,
    COALESCE(max(%s) FILTER (WHERE %s%s IS NOT NULL), 0)::NUMERIC AS global_max,
    0::BIGINT AS nan_count,
    0::BIGINT AS inf_count,
-   COALESCE(count(*) FILTER (WHERE %s%s IS NOT NULL), 0)::BIGINT AS non_nan_count
+   COALESCE(count(*) FILTER (WHERE %s%s IS NOT NULL), 0)::BIGINT AS non_nan_count,
+   count(*)::BIGINT AS total_count
  FROM base%s",
               gk_select,
               col_name,
@@ -865,7 +867,8 @@ SELECT
  global_max,
  nan_count,
  inf_count,
- non_nan_count
+ non_nan_count,
+ total_count
 FROM (
 %s
 ) all_columns",
@@ -899,7 +902,8 @@ SELECT
  max(NULLIF(global_max, 'NaN'::NUMERIC))::NUMERIC AS global_max,
  COALESCE(sum(nan_count), 0)::BIGINT AS nan_count,
  COALESCE(sum(inf_count), 0)::BIGINT AS inf_count,
- COALESCE(sum(non_nan_count), 0)::BIGINT AS non_nan_count
+ COALESCE(sum(non_nan_count), 0)::BIGINT AS non_nan_count,
+ COALESCE(sum(total_count), 0)::BIGINT AS total_count
 FROM %s
 GROUP BY table_name, column_name%s
 ORDER BY table_name, column_name%s",
@@ -934,7 +938,8 @@ sanitize_stats_df <- function(stats_df) {
       global_max = sanitize_value(global_max),
       nan_count = sanitize_value(nan_count, default = 0),
       inf_count = sanitize_value(inf_count, default = 0),
-      non_nan_count = sanitize_value(non_nan_count, default = 0)
+      non_nan_count = sanitize_value(non_nan_count, default = 0),
+      total_count = sanitize_value(total_count, default = 0)
     )
 }
 
@@ -1148,7 +1153,8 @@ compute_global_stats <- function(conn, columns_df, runid,
       table_name = character(0), column_name = character(0),
       global_min = numeric(0), global_max = numeric(0),
       nan_count = numeric(0), inf_count = numeric(0),
-      non_nan_count = numeric(0), stringsAsFactors = FALSE
+      non_nan_count = numeric(0), total_count = numeric(0),
+      stringsAsFactors = FALSE
     )
   }
   cat(sprintf("Computed stats for %d columns\n", nrow(global_stats)))
@@ -1180,12 +1186,13 @@ compute_global_stats <- function(conn, columns_df, runid,
 build_column_bucket_select <- function(column_name, udt_name, global_min, global_max,
                                        nan_count, inf_count, non_nan_count, num_buckets,
                                        col_ref, table_name, extra_where = "",
-                                       group_key_value = NULL) {
+                                       group_key_value = NULL, total_count = 0) {
 
   # Sanitize inputs — use as.numeric (not as.integer) to avoid overflow on large counts
   nan_count <- as.numeric(ifelse(is.na(nan_count) | is.nan(nan_count), 0, nan_count))
   inf_count <- as.numeric(ifelse(is.na(inf_count) | is.nan(inf_count), 0, inf_count))
   non_nan_count <- as.numeric(ifelse(is.na(non_nan_count) | is.nan(non_nan_count), 0, non_nan_count))
+  total_count <- as.numeric(ifelse(is.na(total_count) | is.nan(total_count), 0, total_count))
 
   is_float <- grepl("^float", udt_name)
   is_int <- grepl("^int", udt_name)
@@ -1260,14 +1267,15 @@ build_column_bucket_select <- function(column_name, udt_name, global_min, global
    %.17g::NUMERIC AS global_max,
    %.0f::BIGINT AS nan_count,
    %.0f::BIGINT AS inf_count,
-   %.0f::BIGINT AS non_nan_count
+   %.0f::BIGINT AS non_nan_count,
+   %.0f::BIGINT AS total_count
  FROM base
  WHERE %s",
                            gk_select,
                            column_name,
                            col_ref, col_ref, col_ref,
                            safe_min, safe_max,
-                           nan_count, inf_count, non_nan_count,
+                           nan_count, inf_count, non_nan_count, total_count,
                            where_filter)
   } else {
     # Normal case: use width_bucket with fixed boundaries
@@ -1283,7 +1291,8 @@ build_column_bucket_select <- function(column_name, udt_name, global_min, global
    %.17g::NUMERIC AS global_max,
    %.0f::BIGINT AS nan_count,
    %.0f::BIGINT AS inf_count,
-   %.0f::BIGINT AS non_nan_count
+   %.0f::BIGINT AS non_nan_count,
+   %.0f::BIGINT AS total_count
  FROM base
  WHERE %s
  GROUP BY width_bucket(%s, %.17g::float8, %.17g::float8, %d)",
@@ -1292,7 +1301,7 @@ build_column_bucket_select <- function(column_name, udt_name, global_min, global
                            col_ref, bucket_lo, bucket_hi, effective_buckets,
                            col_ref, col_ref, col_ref,
                            global_min, global_max,
-                           nan_count, inf_count, non_nan_count,
+                           nan_count, inf_count, non_nan_count, total_count,
                            where_filter,
                            col_ref, bucket_lo, bucket_hi, effective_buckets)
   }
@@ -1443,7 +1452,8 @@ build_table_histogram_query <- function(table_name, columns_df, global_stats, ru
           col_ref = col$column_name,
           table_name = table_name,
           extra_where = extra_where,
-          group_key_value = gk_val
+          group_key_value = gk_val,
+          total_count = stat$total_count
         )
       }
     } else {
@@ -1459,7 +1469,8 @@ build_table_histogram_query <- function(table_name, columns_df, global_stats, ru
         num_buckets = num_buckets,
         col_ref = col$column_name,
         table_name = table_name,
-        extra_where = extra_where
+        extra_where = extra_where,
+        total_count = stat$total_count
       )
     }
   }
@@ -1481,7 +1492,8 @@ SELECT
  global_max,
  nan_count,
  inf_count,
- non_nan_count
+ non_nan_count,
+ total_count
 FROM (
 %s
 ) all_columns",
@@ -1519,7 +1531,8 @@ SELECT
  MAX(global_max)::NUMERIC AS global_max,
  MAX(nan_count)::NUMERIC AS nan_count,
  MAX(inf_count)::NUMERIC AS inf_count,
- MAX(non_nan_count)::NUMERIC AS non_nan_count
+ MAX(non_nan_count)::NUMERIC AS non_nan_count,
+ MAX(total_count)::NUMERIC AS total_count
 FROM %s
 GROUP BY table_name, column_name, bucket%s
 ORDER BY table_name, column_name%s, bucket",
@@ -2279,12 +2292,17 @@ compute_bucket_boundaries <- function(histogram_df, num_buckets = 20) {
   if (has_gk) grp_cols <- c(grp_cols, "group_key")
 
   if (nrow(numeric_df) > 0) {
+    # Ensure total_count exists (backward compat with older stats)
+    if (!"total_count" %in% names(numeric_df)) {
+      numeric_df$total_count <- NA_real_
+    }
     numeric_df <- numeric_df %>%
       mutate(
         freq = as.numeric(freq),
         nan_count = as.numeric(nan_count),
         inf_count = as.numeric(inf_count),
         non_nan_count = as.numeric(non_nan_count),
+        total_count = as.numeric(total_count),
         global_min = as.numeric(global_min),
         global_max = as.numeric(global_max),
         bucket_min = as.numeric(bucket_min),

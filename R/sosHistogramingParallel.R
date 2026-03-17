@@ -771,9 +771,12 @@ build_global_stats_query <- function(table_name, columns_df, runid,
     }
   }
   # Add group_key expression to CTE if specified
+  # Wrap in parentheses to prevent partParalXZ4 regex from mangling column names
+  # that start with table name patterns (e.g. timeseriesresulttypename contains
+  # 'timeseriesresult' which the partitioning regex would replace)
   has_group_key <- !is.null(group_key) && nzchar(group_key)
   if (has_group_key) {
-    cte_parts <- c(cte_parts, sprintf("%s%s AS group_key", col_prefix, group_key))
+    cte_parts <- c(cte_parts, sprintf("(%s%s) AS group_key", col_prefix, group_key))
   }
   col_list <- paste(cte_parts, collapse = ", ")
 
@@ -1382,9 +1385,10 @@ build_table_histogram_query <- function(table_name, columns_df, global_stats, ru
     }
   }
   # Add group_key expression to CTE if specified
+  # Wrap in parentheses to prevent partParalXZ4 regex mangling (see build_global_stats_query)
   has_group_key <- !is.null(group_key) && nzchar(group_key)
   if (has_group_key) {
-    cte_parts <- c(cte_parts, sprintf("%s%s AS group_key", col_prefix, group_key))
+    cte_parts <- c(cte_parts, sprintf("(%s%s) AS group_key", col_prefix, group_key))
   }
   col_list <- paste(cte_parts, collapse = ", ")
 
@@ -1571,9 +1575,10 @@ build_categorical_histogram_query <- function(table_name, columns_df, runid,
 
   # Build column list for CTE
   cte_col_parts <- sprintf("%s%s", col_prefix, table_cols$column_name)
+  # Wrap in parentheses to prevent partParalXZ4 regex mangling (see build_global_stats_query)
   has_group_key <- !is.null(group_key) && nzchar(group_key)
   if (has_group_key) {
-    cte_col_parts <- c(cte_col_parts, sprintf("%s%s AS group_key", col_prefix, group_key))
+    cte_col_parts <- c(cte_col_parts, sprintf("(%s%s) AS group_key", col_prefix, group_key))
   }
   cte_cols <- paste(cte_col_parts, collapse = ", ")
 

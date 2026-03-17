@@ -708,7 +708,7 @@ get_histogram_mdb_text_columns <- function(conn, module) {
 #' @keywords internal
 build_global_stats_query <- function(table_name, columns_df, runid,
                                      join_clause = NULL, table_alias = "t",
-                                     table_info = NULL) {
+                                     table_info = NULL, group_key = NULL) {
 
   table_cols <- columns_df[columns_df$table_name == table_name, ]
 
@@ -770,6 +770,11 @@ build_global_stats_query <- function(table_name, columns_df, runid,
       }
     }
   }
+  # Add group_key expression to CTE if specified
+  has_group_key <- !is.null(group_key) && nzchar(group_key)
+  if (has_group_key) {
+    cte_parts <- c(cte_parts, sprintf("%s%s AS group_key", col_prefix, group_key))
+  }
   col_list <- paste(cte_parts, collapse = ", ")
 
   # Build WHERE clause conditionally based on available system columns
@@ -793,6 +798,10 @@ build_global_stats_query <- function(table_name, columns_df, runid,
                    col_list, from_clause)
   }
 
+  # SQL fragments for group_key support
+  gk_select <- if (has_group_key) "\n   group_key," else ""
+  gk_group_by <- if (has_group_key) "\n GROUP BY group_key" else ""
+
   # Build UNION ALL of stats queries — one per column (long format output)
   # This avoids PG's 1664 target list limit that wide-format hits with many columns
   union_parts <- sapply(seq_len(nrow(table_cols)), function(i) {
@@ -808,41 +817,46 @@ build_global_stats_query <- function(table_name, columns_df, runid,
 
     if (grepl("^float", col$udt_name)) {
       sprintf("
- SELECT
+ SELECT%s
    '%s'::TEXT AS column_name,
    COALESCE(min(%s) FILTER (WHERE %s%s IS NOT NULL AND %s != 'NaN'::float8 AND %s != 'Infinity'::float8 AND %s != '-Infinity'::float8), 'NaN'::float8)::NUMERIC AS global_min,
    COALESCE(max(%s) FILTER (WHERE %s%s IS NOT NULL AND %s != 'NaN'::float8 AND %s != 'Infinity'::float8 AND %s != '-Infinity'::float8), 'NaN'::float8)::NUMERIC AS global_max,
    COALESCE(count(*) FILTER (WHERE %s%s = 'NaN'::float8), 0)::BIGINT AS nan_count,
    COALESCE(count(*) FILTER (WHERE %s(%s = 'Infinity'::float8 OR %s = '-Infinity'::float8)), 0)::BIGINT AS inf_count,
    COALESCE(count(*) FILTER (WHERE %s%s IS NOT NULL AND %s != 'NaN'::float8 AND %s != 'Infinity'::float8 AND %s != '-Infinity'::float8), 0)::BIGINT AS non_nan_count
- FROM base",
+ FROM base%s",
+              gk_select,
               col_name,
               col_ref, extra_where, col_ref, col_ref, col_ref, col_ref,
               col_ref, extra_where, col_ref, col_ref, col_ref, col_ref,
               extra_where, col_ref,
               extra_where, col_ref, col_ref,
-              extra_where, col_ref, col_ref, col_ref, col_ref)
+              extra_where, col_ref, col_ref, col_ref, col_ref,
+              gk_group_by)
     } else {
       sprintf("
- SELECT
+ SELECT%s
    '%s'::TEXT AS column_name,
    COALESCE(min(%s) FILTER (WHERE %s%s IS NOT NULL), 0)::NUMERIC AS global_min,
    COALESCE(max(%s) FILTER (WHERE %s%s IS NOT NULL), 0)::NUMERIC AS global_max,
    0::BIGINT AS nan_count,
    0::BIGINT AS inf_count,
    COALESCE(count(*) FILTER (WHERE %s%s IS NOT NULL), 0)::BIGINT AS non_nan_count
- FROM base",
+ FROM base%s",
+              gk_select,
               col_name,
               col_ref, extra_where, col_ref,
               col_ref, extra_where, col_ref,
-              extra_where, col_ref)
+              extra_where, col_ref,
+              gk_group_by)
     }
   })
 
   # Wrap in final query with table_name column
+  gk_final_select <- if (has_group_key) "\n group_key," else ""
   query <- sprintf("%s
 SELECT
- '%s'::TEXT AS table_name,
+ '%s'::TEXT AS table_name,%s
  column_name,
  global_min,
  global_max,
@@ -854,6 +868,7 @@ FROM (
 ) all_columns",
                    cte,
                    table_name,
+                   gk_final_select,
                    paste(union_parts, collapse = "\n UNION ALL\n"))
 
   return(query)
@@ -868,11 +883,14 @@ FROM (
 #' @param partial_table_name Name of the table containing partial results
 #' @return SQL query string
 #' @keywords internal
-build_global_stats_aggregation_query <- function(partial_table_name) {
+build_global_stats_aggregation_query <- function(partial_table_name, group_key = NULL) {
+  has_gk <- !is.null(group_key) && nzchar(group_key)
+  gk_select <- if (has_gk) "\n group_key," else ""
+  gk_group <- if (has_gk) ", group_key" else ""
 
   sprintf("
 SELECT
- table_name,
+ table_name,%s
  column_name,
  min(NULLIF(global_min, 'NaN'::NUMERIC))::NUMERIC AS global_min,
  max(NULLIF(global_max, 'NaN'::NUMERIC))::NUMERIC AS global_max,
@@ -880,9 +898,9 @@ SELECT
  COALESCE(sum(inf_count), 0)::BIGINT AS inf_count,
  COALESCE(sum(non_nan_count), 0)::BIGINT AS non_nan_count
 FROM %s
-GROUP BY table_name, column_name
-ORDER BY table_name, column_name",
-          partial_table_name)
+GROUP BY table_name, column_name%s
+ORDER BY table_name, column_name%s",
+          gk_select, partial_table_name, gk_group, gk_group)
 }
 
 #' Sanitize Statistics Data Frame
@@ -981,7 +999,7 @@ compute_global_stats <- function(conn, columns_df, runid,
                                  db_user = NULL, schema = "dr4_ops_cs48_mv",
                                  slack_user = "@nienarto", parallelism = 80,
                                  num_chunks = 600, execute = TRUE, debug = FALSE,
-                                 table_info = NULL) {
+                                 table_info = NULL, group_key = NULL) {
 
   if (nrow(columns_df) == 0) {
     stop("No columns found for histogram generation")
@@ -1036,7 +1054,7 @@ compute_global_stats <- function(conn, columns_df, runid,
         filter(table_name == tbl, column_name %in% batch_col_names)
 
       query <- build_global_stats_query(tbl, batch_columns_df, runid, join_clause,
-                                         table_info = table_info)
+                                         table_info = table_info, group_key = group_key)
       if (is.null(query)) next
 
       batch_n <- nrow(batch_columns_df)
@@ -1070,7 +1088,7 @@ compute_global_stats <- function(conn, columns_df, runid,
         }
 
         # Aggregate partial results from parallel execution (long format)
-        agg_query <- build_global_stats_aggregation_query(output_table)
+        agg_query <- build_global_stats_aggregation_query(output_table, group_key = group_key)
         if (debug) {
           cat(sprintf("    Aggregation query: %s\n", agg_query))
         }
@@ -1135,7 +1153,8 @@ compute_global_stats <- function(conn, columns_df, runid,
 #' @keywords internal
 build_column_bucket_select <- function(column_name, udt_name, global_min, global_max,
                                        nan_count, inf_count, non_nan_count, num_buckets,
-                                       col_ref, table_name, extra_where = "") {
+                                       col_ref, table_name, extra_where = "",
+                                       group_key_value = NULL) {
 
   # Sanitize inputs — use as.numeric (not as.integer) to avoid overflow on large counts
   nan_count <- as.numeric(ifelse(is.na(nan_count) | is.nan(nan_count), 0, nan_count))
@@ -1187,6 +1206,16 @@ build_column_bucket_select <- function(column_name, udt_name, global_min, global
     where_filter <- paste(extra_where, "AND", where_filter)
   }
 
+  # Group key support: add group_key filter and output column
+  has_gk <- !is.null(group_key_value)
+  if (has_gk) {
+    gk_select <- sprintf("\n   '%s'::TEXT AS group_key,", gsub("'", "''", group_key_value))
+    gk_where <- sprintf("group_key = '%s' AND ", gsub("'", "''", group_key_value))
+    where_filter <- paste0(gk_where, where_filter)
+  } else {
+    gk_select <- ""
+  }
+
   # Handle edge case: all values are the same (or all NULL/NaN)
   if (global_min >= global_max) {
 
@@ -1194,7 +1223,7 @@ build_column_bucket_select <- function(column_name, udt_name, global_min, global
     safe_max <- ifelse(is.na(global_max), 0, global_max)
 
     select_expr <- sprintf("
- SELECT
+ SELECT%s
    '%s'::TEXT AS column_name,
    1 AS bucket,
    count(*)::BIGINT AS freq,
@@ -1208,6 +1237,7 @@ build_column_bucket_select <- function(column_name, udt_name, global_min, global
    %.0f::BIGINT AS non_nan_count
  FROM base
  WHERE %s",
+                           gk_select,
                            column_name,
                            col_ref, col_ref, col_ref,
                            safe_min, safe_max,
@@ -1216,7 +1246,7 @@ build_column_bucket_select <- function(column_name, udt_name, global_min, global
   } else {
     # Normal case: use width_bucket with fixed boundaries
     select_expr <- sprintf("
- SELECT
+ SELECT%s
    '%s'::TEXT AS column_name,
    width_bucket(%s, %.17g::float8, %.17g::float8, %d) AS bucket,
    count(*)::BIGINT AS freq,
@@ -1231,6 +1261,7 @@ build_column_bucket_select <- function(column_name, udt_name, global_min, global
  FROM base
  WHERE %s
  GROUP BY width_bucket(%s, %.17g::float8, %.17g::float8, %d)",
+                           gk_select,
                            column_name,
                            col_ref, bucket_lo, bucket_hi, effective_buckets,
                            col_ref, col_ref, col_ref,
@@ -1262,7 +1293,8 @@ build_column_bucket_select <- function(column_name, udt_name, global_min, global
 #' @keywords internal
 build_table_histogram_query <- function(table_name, columns_df, global_stats, runid,
                                         num_buckets = 20, join_clause = NULL,
-                                        table_alias = "t", table_info = NULL) {
+                                        table_alias = "t", table_info = NULL,
+                                        group_key = NULL) {
 
   table_cols <- columns_df[columns_df$table_name == table_name, ]
   table_stats <- global_stats[global_stats$table_name == table_name, ]
@@ -1326,6 +1358,11 @@ build_table_histogram_query <- function(table_name, columns_df, global_stats, ru
       }
     }
   }
+  # Add group_key expression to CTE if specified
+  has_group_key <- !is.null(group_key) && nzchar(group_key)
+  if (has_group_key) {
+    cte_parts <- c(cte_parts, sprintf("%s%s AS group_key", col_prefix, group_key))
+  }
   col_list <- paste(cte_parts, collapse = ", ")
 
   # Build CTE with conditional WHERE based on available system columns
@@ -1348,10 +1385,10 @@ build_table_histogram_query <- function(table_name, columns_df, global_stats, ru
                    col_list, from_clause)
   }
 
-  # Build UNION ALL of bucket queries for each column
-  union_parts <- sapply(seq_len(nrow(table_cols)), function(i) {
+  # Build UNION ALL of bucket queries for each column (and each group_key value)
+  union_parts_list <- list()
+  for (i in seq_len(nrow(table_cols))) {
     col <- table_cols[i, ]
-    stat <- table_stats[table_stats$column_name == col$column_name, ]
 
     # Build cardinality filter for array element columns
     # In the CTE, array length is available as <array_col>_len
@@ -1360,25 +1397,53 @@ build_table_histogram_query <- function(table_name, columns_df, global_stats, ru
       extra_where <- sprintf("%s_len >= %d", col$array_col, col$min_array_len)
     }
 
-    build_column_bucket_select(
-      column_name = col$column_name,
-      udt_name = col$udt_name,
-      global_min = stat$global_min,
-      global_max = stat$global_max,
-      nan_count = stat$nan_count,
-      inf_count = stat$inf_count,
-      non_nan_count = stat$non_nan_count,
-      num_buckets = num_buckets,
-      col_ref = col$column_name,
-      table_name = table_name,
-      extra_where = extra_where
-    )
-  })
+    if (has_group_key) {
+      # Per-group bucketing: iterate over distinct group_key values
+      col_stats <- table_stats[table_stats$column_name == col$column_name, ]
+      if (nrow(col_stats) == 0) next
+      for (g in seq_len(nrow(col_stats))) {
+        stat <- col_stats[g, ]
+        gk_val <- as.character(stat$group_key)
+        union_parts_list[[length(union_parts_list) + 1]] <- build_column_bucket_select(
+          column_name = col$column_name,
+          udt_name = col$udt_name,
+          global_min = stat$global_min,
+          global_max = stat$global_max,
+          nan_count = stat$nan_count,
+          inf_count = stat$inf_count,
+          non_nan_count = stat$non_nan_count,
+          num_buckets = num_buckets,
+          col_ref = col$column_name,
+          table_name = table_name,
+          extra_where = extra_where,
+          group_key_value = gk_val
+        )
+      }
+    } else {
+      stat <- table_stats[table_stats$column_name == col$column_name, ]
+      union_parts_list[[length(union_parts_list) + 1]] <- build_column_bucket_select(
+        column_name = col$column_name,
+        udt_name = col$udt_name,
+        global_min = stat$global_min,
+        global_max = stat$global_max,
+        nan_count = stat$nan_count,
+        inf_count = stat$inf_count,
+        non_nan_count = stat$non_nan_count,
+        num_buckets = num_buckets,
+        col_ref = col$column_name,
+        table_name = table_name,
+        extra_where = extra_where
+      )
+    }
+  }
+
+  if (length(union_parts_list) == 0) return(NULL)
 
   # Combine into final query
+  gk_final_select <- if (has_group_key) "\n group_key," else ""
   query <- sprintf("%s
 SELECT
- '%s'::TEXT AS table_name,
+ '%s'::TEXT AS table_name,%s
  column_name,
  bucket,
  freq,
@@ -1395,7 +1460,8 @@ FROM (
 ) all_columns",
                    cte,
                    table_name,
-                   paste(union_parts, collapse = "\n UNION ALL\n"))
+                   gk_final_select,
+                   paste(union_parts_list, collapse = "\n UNION ALL\n"))
 
   return(query)
 }
@@ -1408,10 +1474,14 @@ FROM (
 #' @param partial_table_name Name of the table containing partial results
 #' @return SQL query string
 #' @keywords internal
-build_histogram_aggregation_query <- function(partial_table_name) {
+build_histogram_aggregation_query <- function(partial_table_name, group_key = NULL) {
+  has_gk <- !is.null(group_key) && nzchar(group_key)
+  gk_select <- if (has_gk) "\n group_key," else ""
+  gk_group <- if (has_gk) ", group_key" else ""
+
   sprintf("
 SELECT
- table_name,
+ table_name,%s
  column_name,
  bucket,
  SUM(freq)::NUMERIC AS freq,
@@ -1424,9 +1494,9 @@ SELECT
  MAX(inf_count)::NUMERIC AS inf_count,
  MAX(non_nan_count)::NUMERIC AS non_nan_count
 FROM %s
-GROUP BY table_name, column_name, bucket
-ORDER BY table_name, column_name, bucket",
-          partial_table_name)
+GROUP BY table_name, column_name, bucket%s
+ORDER BY table_name, column_name%s, bucket",
+          gk_select, partial_table_name, gk_group, gk_group)
 }
 
 #' Build Categorical Histogram Query for a Single Table
@@ -1445,7 +1515,7 @@ ORDER BY table_name, column_name, bucket",
 #' @keywords internal
 build_categorical_histogram_query <- function(table_name, columns_df, runid,
                                               join_clause = NULL, table_alias = "t",
-                                              table_info = NULL) {
+                                              table_info = NULL, group_key = NULL) {
 
   table_cols <- columns_df[columns_df$table_name == table_name, ]
   if (nrow(table_cols) == 0) return(NULL)
@@ -1477,7 +1547,12 @@ build_categorical_histogram_query <- function(table_name, columns_df, runid,
   }
 
   # Build column list for CTE
-  cte_cols <- paste(sprintf("%s%s", col_prefix, table_cols$column_name), collapse = ", ")
+  cte_col_parts <- sprintf("%s%s", col_prefix, table_cols$column_name)
+  has_group_key <- !is.null(group_key) && nzchar(group_key)
+  if (has_group_key) {
+    cte_col_parts <- c(cte_col_parts, sprintf("%s%s AS group_key", col_prefix, group_key))
+  }
+  cte_cols <- paste(cte_col_parts, collapse = ", ")
 
   # Build WHERE clause conditionally based on available system columns
   where_parts <- c()
@@ -1499,33 +1574,39 @@ build_categorical_histogram_query <- function(table_name, columns_df, runid,
                    cte_cols, from_clause)
   }
 
+  # SQL fragments for group_key support
+  gk_select <- if (has_group_key) "\n   group_key," else ""
+  gk_group_by <- if (has_group_key) ", group_key" else ""
+
   # Build UNION ALL of frequency queries for each column
   union_parts <- sapply(seq_len(nrow(table_cols)), function(i) {
     col_name <- table_cols$column_name[i]
     sprintf("
- SELECT
+ SELECT%s
    '%s'::TEXT AS column_name,
    %s::TEXT AS category_value,
    COUNT(*)::BIGINT AS freq,
    0::BIGINT AS null_count
  FROM base
  WHERE %s IS NOT NULL
- GROUP BY %s
+ GROUP BY %s%s
  UNION ALL
- SELECT
+ SELECT%s
    '%s'::TEXT AS column_name,
    '__NULL__'::TEXT AS category_value,
    0::BIGINT AS freq,
    COALESCE(COUNT(*) FILTER (WHERE %s IS NULL), 0)::BIGINT AS null_count
- FROM base",
-            col_name, col_name, col_name, col_name,
-            col_name, col_name)
+ FROM base%s",
+            gk_select, col_name, col_name, col_name, col_name, gk_group_by,
+            gk_select, col_name, col_name,
+            if (has_group_key) "\n GROUP BY group_key" else "")
   })
 
   # Combine into final query
+  gk_final_select <- if (has_group_key) "\n group_key," else ""
   query <- sprintf("%s
 SELECT
- '%s'::TEXT AS table_name,
+ '%s'::TEXT AS table_name,%s
  column_name,
  category_value,
  freq,
@@ -1535,6 +1616,7 @@ FROM (
 ) all_columns",
                    cte,
                    table_name,
+                   gk_final_select,
                    paste(union_parts, collapse = "\n UNION ALL\n"))
 
   return(query)
@@ -1548,18 +1630,22 @@ FROM (
 #' @param partial_table_name Name of the table containing partial results
 #' @return SQL query string
 #' @keywords internal
-build_categorical_aggregation_query <- function(partial_table_name) {
+build_categorical_aggregation_query <- function(partial_table_name, group_key = NULL) {
+  has_gk <- !is.null(group_key) && nzchar(group_key)
+  gk_select <- if (has_gk) "\n group_key," else ""
+  gk_group <- if (has_gk) ", group_key" else ""
+
   sprintf("
 SELECT
- table_name,
+ table_name,%s
  column_name,
  category_value,
  SUM(freq)::BIGINT AS freq,
  MAX(null_count)::BIGINT AS null_count
 FROM %s
-GROUP BY table_name, column_name, category_value
-ORDER BY table_name, column_name, freq DESC",
-          partial_table_name)
+GROUP BY table_name, column_name, category_value%s
+ORDER BY table_name, column_name%s, freq DESC",
+          gk_select, partial_table_name, gk_group, gk_group)
 }
 
 #' Collapse Categorical Histogram to Top N Values
@@ -1583,10 +1669,15 @@ collapse_to_top_n <- function(cat_hist_df, max_categories = 50) {
     ))
   }
 
+  # Determine grouping columns: include group_key when present
+  has_gk <- "group_key" %in% names(cat_hist_df)
+  grp_cols <- c("table_name", "column_name")
+  if (has_gk) grp_cols <- c(grp_cols, "group_key")
+
   # Extract null counts (from __NULL__ sentinel rows)
   null_counts <- cat_hist_df %>%
     filter(category_value == "__NULL__") %>%
-    group_by(table_name, column_name) %>%
+    group_by(across(all_of(grp_cols))) %>%
     summarise(nan_count = sum(null_count), .groups = "drop")
 
   # Work with non-null value rows only
@@ -1604,7 +1695,7 @@ collapse_to_top_n <- function(cat_hist_df, max_categories = 50) {
 
   # Rank by frequency and collapse tail into "Other"
   result <- values_df %>%
-    group_by(table_name, column_name) %>%
+    group_by(across(all_of(grp_cols))) %>%
     arrange(desc(freq)) %>%
     mutate(rank = row_number()) %>%
     ungroup() %>%
@@ -1612,23 +1703,23 @@ collapse_to_top_n <- function(cat_hist_df, max_categories = 50) {
       category_value = ifelse(rank <= max_categories, category_value, "Other"),
       bucket = ifelse(rank <= max_categories, as.integer(rank), max_categories + 1L)
     ) %>%
-    group_by(table_name, column_name, category_value, bucket) %>%
+    group_by(across(all_of(c(grp_cols, "category_value", "bucket")))) %>%
     summarise(freq = sum(freq), .groups = "drop") %>%
     # Re-rank after collapsing Other
-    group_by(table_name, column_name) %>%
+    group_by(across(all_of(grp_cols))) %>%
     arrange(desc(freq)) %>%
     mutate(bucket = row_number()) %>%
     ungroup()
 
   # Compute non_nan_count per column
   non_nan_totals <- result %>%
-    group_by(table_name, column_name) %>%
+    group_by(across(all_of(grp_cols))) %>%
     summarise(non_nan_count = sum(freq), .groups = "drop")
 
   # Join null counts and totals
   result <- result %>%
-    left_join(null_counts, by = c("table_name", "column_name")) %>%
-    left_join(non_nan_totals, by = c("table_name", "column_name")) %>%
+    left_join(null_counts, by = grp_cols) %>%
+    left_join(non_nan_totals, by = grp_cols) %>%
     mutate(
       nan_count = ifelse(is.na(nan_count), 0, nan_count),
       non_nan_count = ifelse(is.na(non_nan_count), 0, non_nan_count),
@@ -1654,7 +1745,8 @@ build_categorical_scripts <- function(columns_df, runid,
                                       schema = "dr4_ops_cs48_mv",
                                       join_clauses = NULL,
                                       default_join_clause = NULL,
-                                      table_info = NULL) {
+                                      table_info = NULL,
+                                      group_key = NULL) {
 
   tables <- unique(columns_df$table_name)
   cat(sprintf("Building categorical histogram queries for %d tables...\n", length(tables)))
@@ -1676,7 +1768,8 @@ build_categorical_scripts <- function(columns_df, runid,
       columns_df = columns_df,
       runid = runid,
       join_clause = join_clause,
-      table_info = table_info
+      table_info = table_info,
+      group_key = group_key
     )
 
     if (is.null(sql_query)) next
@@ -1700,7 +1793,7 @@ build_categorical_scripts <- function(columns_df, runid,
       n_columns = n_cols,
       join_clause = join_clause,
       has_sourceid = tbl_use_parallel,
-      aggregation_query = build_categorical_aggregation_query(output_table)
+      aggregation_query = build_categorical_aggregation_query(output_table, group_key = group_key)
     )
 
     cat(sprintf("  %s: %d text columns -> %s\n", tbl, n_cols, output_table))
@@ -1880,7 +1973,8 @@ build_histogram_scripts <- function(columns_df, global_stats, runid,
                                     num_buckets = 20,
                                     join_clauses = NULL,
                                     default_join_clause = NULL,
-                                    table_info = NULL) {
+                                    table_info = NULL,
+                                    group_key = NULL) {
 
   tables <- unique(columns_df$table_name)
 
@@ -1970,7 +2064,8 @@ build_histogram_scripts <- function(columns_df, global_stats, runid,
         runid = runid,
         num_buckets = num_buckets,
         join_clause = join_clause,
-        table_info = table_info
+        table_info = table_info,
+        group_key = group_key
       )
 
       if (is.null(sql_query)) next
@@ -1994,7 +2089,7 @@ build_histogram_scripts <- function(columns_df, global_stats, runid,
         n_columns = nrow(batch_columns_df),
         join_clause = join_clause,
         has_sourceid = tbl_use_parallel,
-        aggregation_query = build_histogram_aggregation_query(output_table)
+        aggregation_query = build_histogram_aggregation_query(output_table, group_key = group_key)
       )
     }
   }
@@ -2143,6 +2238,11 @@ compute_bucket_boundaries <- function(histogram_df, num_buckets = 20) {
   numeric_df <- histogram_df %>% filter(hist_type == "numeric")
   categorical_df <- histogram_df %>% filter(hist_type == "categorical")
 
+  # Determine grouping columns: include group_key when present
+  has_gk <- "group_key" %in% names(histogram_df)
+  grp_cols <- c("table_name", "column_name")
+  if (has_gk) grp_cols <- c(grp_cols, "group_key")
+
   if (nrow(numeric_df) > 0) {
     numeric_df <- numeric_df %>%
       mutate(
@@ -2156,7 +2256,7 @@ compute_bucket_boundaries <- function(histogram_df, num_buckets = 20) {
         bucket_max = as.numeric(bucket_max),
         bucket_avg = as.numeric(bucket_avg)
       ) %>%
-      group_by(table_name, column_name) %>%
+      group_by(across(all_of(grp_cols))) %>%
       mutate(
         bucket_lower = bucket_min,
         bucket_upper = bucket_max,
@@ -2170,7 +2270,7 @@ compute_bucket_boundaries <- function(histogram_df, num_buckets = 20) {
   if (nrow(categorical_df) > 0) {
     categorical_df <- categorical_df %>%
       mutate(freq = as.numeric(freq)) %>%
-      group_by(table_name, column_name) %>%
+      group_by(across(all_of(grp_cols))) %>%
       mutate(freq_pct = freq / sum(freq) * 100) %>%
       ungroup()
   }
@@ -2224,6 +2324,10 @@ compute_bucket_boundaries <- function(histogram_df, num_buckets = 20) {
 #'   are estimated from pg_class.reltuples multiplied by 6 (data nodes).
 #' @param execute If TRUE, execute scripts; if FALSE, return scripts only (dry run)
 #' @param debug If TRUE, print detailed debug output
+#' @param group_key Optional SQL expression for per-group histograms (e.g.,
+#'   \code{"tag::text"}). When non-NULL, produces independent histograms per
+#'   group value with separate min/max and bucket boundaries. Default NULL
+#'   (no grouping, identical to original behavior).
 #' @return List containing:
 #'   \itemize{
 #'     \item Per-table results with success status and histogram data
@@ -2285,12 +2389,18 @@ run_histogram_analysis <- function(inparams, runid, module,
                                    num_chunks = 600,
                                    min_parallel_rows = 10e6,
                                    execute = FALSE,
-                                   debug = FALSE) {
+                                   debug = FALSE,
+                                   group_key = NULL) {
 
   conn <- dpcgR::connect(hostname = inparams$hostname, port = inparams$dbPort, user = inparams$dbUser)
 
   cat(sprintf("=== HISTOGRAM ANALYSIS FOR MODULE '%s', RUNID %d ===\n\n", module, runid))
-  cat(sprintf("Using database user: %s\n\n", inparams$dbUser))
+  cat(sprintf("Using database user: %s\n", inparams$dbUser))
+  has_group_key <- !is.null(group_key) && nzchar(group_key)
+  if (has_group_key) {
+    cat(sprintf("Group key: %s (per-group independent histograms)\n", group_key))
+  }
+  cat("\n")
 
   # Auto-select matching text columns function if using mdb numeric variant
   if (identical(text_columns_fn, get_histogram_text_columns) &&
@@ -2360,7 +2470,8 @@ run_histogram_analysis <- function(inparams, runid, module,
     num_chunks = num_chunks,
     execute = execute,
     debug = debug,
-    table_info = table_info
+    table_info = table_info,
+    group_key = group_key
   )
   cat("\n")
 
@@ -2374,7 +2485,8 @@ run_histogram_analysis <- function(inparams, runid, module,
     num_buckets = num_buckets,
     join_clauses = join_clauses,
     default_join_clause = default_join_clause,
-    table_info = table_info
+    table_info = table_info,
+    group_key = group_key
   )
   cat("\n")
 
@@ -2442,7 +2554,8 @@ run_histogram_analysis <- function(inparams, runid, module,
         schema = schema,
         join_clauses = join_clauses,
         default_join_clause = default_join_clause,
-        table_info = if (!is.null(cat_table_info)) cat_table_info else table_info
+        table_info = if (!is.null(cat_table_info)) cat_table_info else table_info,
+        group_key = group_key
       )
       cat("\n")
 
@@ -2519,7 +2632,8 @@ run_histogram_analysis <- function(inparams, runid, module,
     n_text_columns = if (!is.null(cat_columns_df)) nrow(cat_columns_df) else 0,
     tables = names(scripts),
     global_stats = global_stats,
-    db_user = inparams$dbUser
+    db_user = inparams$dbUser,
+    group_key = group_key
   )
 
   return(results)

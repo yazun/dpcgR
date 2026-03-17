@@ -1092,7 +1092,12 @@ compute_global_stats <- function(conn, columns_df, runid,
         if (debug) {
           cat(sprintf("    Aggregation query: %s\n", agg_query))
         }
-        stats_long <- dbGetQuery(conn, agg_query)
+        stats_long <- tryCatch({
+          dbGetQuery(conn, agg_query)
+        }, error = function(e) {
+          warning(sprintf("Aggregation query for %s%s failed: %s", tbl, batch_label, e$message))
+          NULL
+        })
 
         # Drop the temporary partial results table
         tryCatch({
@@ -1101,6 +1106,8 @@ compute_global_stats <- function(conn, columns_df, runid,
         }, error = function(e) {
           warning(sprintf("Could not drop temporary table %s: %s", output_table, e$message))
         })
+
+        if (is.null(stats_long)) next
 
       } else {
         # Execute directly (non-parallel: testing, small datasets, or table without sourceid)
@@ -1114,7 +1121,13 @@ compute_global_stats <- function(conn, columns_df, runid,
           }
           cat(sprintf("    Direct query (first 500 chars): %s...\n", substr(direct_query, 1, 500)))
         }
-        stats_long <- dbGetQuery(conn, direct_query)
+        stats_long <- tryCatch({
+          dbGetQuery(conn, direct_query)
+        }, error = function(e) {
+          warning(sprintf("Direct stats query for %s%s failed: %s", tbl, batch_label, e$message))
+          NULL
+        })
+        if (is.null(stats_long)) next
       }
 
       # Sanitize stats (integer64 conversion, NaN/Inf handling)
@@ -1125,6 +1138,16 @@ compute_global_stats <- function(conn, columns_df, runid,
   }
 
   global_stats <- bind_rows(all_stats)
+  if (nrow(global_stats) == 0) {
+    cat("WARNING: No stats computed — all queries failed or returned empty results\n")
+    # Return empty data frame with expected columns so downstream doesn't crash
+    global_stats <- data.frame(
+      table_name = character(0), column_name = character(0),
+      global_min = numeric(0), global_max = numeric(0),
+      nan_count = numeric(0), inf_count = numeric(0),
+      non_nan_count = numeric(0), stringsAsFactors = FALSE
+    )
+  }
   cat(sprintf("Computed stats for %d columns\n", nrow(global_stats)))
 
   return(global_stats)
@@ -1979,6 +2002,13 @@ build_histogram_scripts <- function(columns_df, global_stats, runid,
   tables <- unique(columns_df$table_name)
 
   cat(sprintf("Building histogram queries for %d tables...\n", length(tables)))
+
+  # Handle empty or malformed global_stats
+  required_cols <- c("table_name", "column_name", "global_min", "global_max", "non_nan_count")
+  if (nrow(global_stats) == 0 || !all(required_cols %in% names(global_stats))) {
+    cat("  No valid global stats available, skipping histogram queries\n")
+    return(list())
+  }
 
   # Filter out columns with invalid stats before building queries
   valid_stats <- global_stats %>%

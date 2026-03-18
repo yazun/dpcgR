@@ -1010,7 +1010,14 @@ compute_global_stats <- function(conn, columns_df, runid,
                                  table_info = NULL, group_key = NULL) {
 
   if (nrow(columns_df) == 0) {
-    stop("No columns found for histogram generation")
+    cat("No numeric columns found — skipping global stats (categorical-only table)\n")
+    return(data.frame(
+      table_name = character(0), column_name = character(0),
+      global_min = numeric(0), global_max = numeric(0),
+      nan_count = numeric(0), inf_count = numeric(0),
+      non_nan_count = numeric(0), total_count = numeric(0),
+      stringsAsFactors = FALSE
+    ))
   }
 
   tables <- unique(columns_df$table_name)

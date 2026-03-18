@@ -2085,10 +2085,21 @@ build_histogram_scripts <- function(columns_df, global_stats, runid,
 
     n_cols <- nrow(tbl_cols)
 
-    # Split into batches to keep SQL within xargs limits
-    if (n_cols > max_hist_columns) {
-      n_batches <- ceiling(n_cols / max_hist_columns)
-      batch_indices <- split(seq_len(n_cols), ceiling(seq_len(n_cols) / max_hist_columns))
+    # Split into batches to keep SQL within xargs limits.
+    # When group_key is active each column expands to N UNION ALL clauses
+    # (one per group value), so the effective size is n_cols * n_groups.
+    has_gk <- !is.null(group_key) && nzchar(group_key)
+    if (has_gk) {
+      tbl_stats <- valid_stats %>% filter(table_name == tbl)
+      n_groups <- max(1, length(unique(tbl_stats$group_key)))
+      effective_batch_size <- max(1, floor(max_hist_columns / n_groups))
+    } else {
+      effective_batch_size <- max_hist_columns
+    }
+
+    if (n_cols > effective_batch_size) {
+      n_batches <- ceiling(n_cols / effective_batch_size)
+      batch_indices <- split(seq_len(n_cols), ceiling(seq_len(n_cols) / effective_batch_size))
     } else {
       n_batches <- 1
       batch_indices <- list(seq_len(n_cols))
